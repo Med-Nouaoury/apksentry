@@ -43,5 +43,15 @@
                 <data android:mimeType="application/zip" />
             </intent-filter>
         </activity>
+
+        <!-- مراقبة اتصالات تطبيق واحد عبر VPN محلي على الهاتف (لا خوادم خارجية) -->
+        <service
+            android:name=".net.NetMonitorService"
+            android:exported="false"
+            android:permission="android.permission.BIND_VPN_SERVICE">
+            <intent-filter>
+                <action android:name="android.net.VpnService" />
+            </intent-filter>
+        </service>
     </application>
 </manifest>

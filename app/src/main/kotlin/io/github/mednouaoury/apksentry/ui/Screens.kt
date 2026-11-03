@@ -34,6 +34,8 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Switch
+import androidx.compose.material3.Tab
+import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
@@ -70,11 +72,20 @@ fun ApkSentryApp(vm: ScanViewModel) {
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) vm.scan(uri)
     }
-    BackHandler(enabled = state is UiState.Done || state is UiState.Failed) { vm.reset() }
+    var tab by rememberSaveable { mutableStateOf(0) }
+    BackHandler(enabled = tab == 0 && (state is UiState.Done || state is UiState.Failed)) { vm.reset() }
 
-    Scaffold(topBar = { TopAppBar(title = { Text("ApkSentry", fontWeight = FontWeight.Bold) }) }) { padding ->
+    Scaffold(topBar = {
+        Column {
+            TopAppBar(title = { Text("ApkSentry", fontWeight = FontWeight.Bold) })
+            TabRow(selectedTabIndex = tab) {
+                Tab(selected = tab == 0, onClick = { tab = 0 }, text = { Text("فحص ملف") })
+                Tab(selected = tab == 1, onClick = { tab = 1 }, text = { Text("مراقبة الاتصال") })
+            }
+        }
+    }) { padding ->
         Box(Modifier.fillMaxSize().padding(padding)) {
-            when (val s = state) {
+            if (tab == 1) MonitorScreen() else when (val s = state) {
                 UiState.Idle -> HomeScreen(vm) { picker.launch(arrayOf("*/*")) }
                 is UiState.Scanning -> ScanningScreen(s) { vm.cancel() }
                 is UiState.Done -> ResultScreen(s.result, vm) { vm.reset() }
