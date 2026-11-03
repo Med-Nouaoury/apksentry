@@ -1,0 +1,18 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- درع -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M54,30 L74,38 L74,54 C74,66.5 65.5,75.5 54,80 C42.5,75.5 34,66.5 34,54 L34,38 Z" />
+    <!-- علامة صح -->
+    <path
+        android:strokeColor="#1E3A8A"
+        android:strokeWidth="5"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:fillColor="#00000000"
+        android:pathData="M45,55 L51.5,61.5 L63.5,48" />
+</vector>
