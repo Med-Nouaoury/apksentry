@@ -440,15 +440,16 @@ private fun ResultScreen(r: ScanResult, vm: ScanViewModel, onNew: () -> Unit) {
         }
         item {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Button(onClick = { share(ctx, r) }, modifier = Modifier.weight(1f), shape = MaterialTheme.shapes.medium) {
-                    Icon(Icons.Filled.Share, null, Modifier.size(18.dp)); Spacer(Modifier.width(6.dp)); Text("مشاركة")
+                val pad = PaddingValues(horizontal = 6.dp, vertical = 10.dp)
+                Button(onClick = { share(ctx, r) }, modifier = Modifier.weight(1f), shape = MaterialTheme.shapes.medium, contentPadding = pad) {
+                    Icon(Icons.Filled.Share, null, Modifier.size(16.dp)); Spacer(Modifier.width(4.dp)); Text("مشاركة", maxLines = 1, softWrap = false)
                 }
                 FilledTonalButton(
                     onClick = { saver.launch("apksentry_${r.fileName.substringBeforeLast('.')}.txt") },
-                    modifier = Modifier.weight(1f), shape = MaterialTheme.shapes.medium,
-                ) { Text("حفظ التقرير") }
-                OutlinedButton(onClick = onNew, modifier = Modifier.weight(1f), shape = MaterialTheme.shapes.medium) {
-                    Icon(Icons.Filled.Refresh, null, Modifier.size(18.dp)); Spacer(Modifier.width(6.dp)); Text("ملف آخر")
+                    modifier = Modifier.weight(1f), shape = MaterialTheme.shapes.medium, contentPadding = pad,
+                ) { Text("حفظ", maxLines = 1, softWrap = false) }
+                OutlinedButton(onClick = onNew, modifier = Modifier.weight(1f), shape = MaterialTheme.shapes.medium, contentPadding = pad) {
+                    Icon(Icons.Filled.Refresh, null, Modifier.size(16.dp)); Spacer(Modifier.width(4.dp)); Text("ملف آخر", maxLines = 1, softWrap = false)
                 }
             }
         }

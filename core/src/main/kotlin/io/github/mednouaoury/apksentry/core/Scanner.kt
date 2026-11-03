@@ -52,6 +52,9 @@ class Scanner(
         )
         private const val MB = 1024L * 1024
 
+        /** حزم أدوات التعديل المعروفة: تُعتبر كوداً مضافاً دائماً. */
+        private val INJECT_NAMES = listOf("bin.mt", "np.dcc", "np.manager", "com.chelpus", "com.android.support.menu")
+
         /** علامات تدل أن التطبيق أُعيد تجميعه من طرف غير المطور. */
         private val REPACK_SIGNS = listOf("أُعيد توقيعه", "شهادة توقيع غير رسمية", "MT Manager", "NP Manager", "Lucky Patcher",
             "كلاس تشغيل يُستعمل لتجاوز", "التوقيع يختلف عن", "التوقيع لا يطابق", "مفتاح الاختبار العلني")
@@ -99,6 +102,13 @@ class Scanner(
     private val notes = ArrayList<String>()
     private val bytes = ByteScanner()
     private val unknownStrings = HashSet<String>()
+    /**
+     * الحزم التي حقنها من عدّل التطبيق: أدوات تعديل معروفة، أو حزمة تحمل اسم من أعاد التوقيع (مثل apkvision).
+     * باقي الحزم غير المعروفة غالباً مكتبات التطبيق الأصلي (مثل محرك Unreal)، فلا نحسبها خطراً.
+     */
+    private var injected: Set<String> = emptySet()
+    private val injectedTokens = HashSet<String>()
+    private val pendingComponents = ArrayList<String>()
     private val fingerprints = LinkedHashSet<String>()
     private val facts = Facts()
     private val behaviors = ArrayList<Finding>()
@@ -261,6 +271,7 @@ class Scanner(
         sec = Section(name).also { sections.add(it) }
         report("فحص $name...", 0f)
         val zip = ZipArchive(src)
+        try { Signing.read(zip).forEach { injectedTokens.addAll(DomainIntel.repackTokens(it.subject)) } } catch (_: Exception) { }
         val dexEntries = zip.entries.filter { DEX_RE.matches(it.name) }
         val libs = zip.entries.filter { it.name.startsWith("lib/") && it.name.endsWith(".so") }
         val manifest = zip.entry("AndroidManifest.xml")?.let {
@@ -396,7 +407,7 @@ class Scanner(
             val kind = COMPONENT_TAGS.getValue(c.tag)
             val exported = c.attr("exported") == "true"
             out("مكوّن مضاف: $kind $n" + if (exported) " (مفتوح للتطبيقات الأخرى)" else "", Tone.WARN, 1)
-            if (exported && (kind == "service" || kind == "receiver")) flag(5, "خدمة أو مستقبِل مفتوح من مصدر غير معروف: $n", Kind.ADDED)
+            if (exported && (kind == "service" || kind == "receiver")) pendingComponents.add(n)
         }
         if (!found) out("كل المكوّنات من المطور أو مكتبات مشهورة ✔", Tone.OK, 1)
     }
@@ -424,7 +435,7 @@ class Scanner(
                     flag(25, "موقّع بمفتاح الاختبار العلني لـ AOSP (مفتاح منشور، أي شخص يستطيع التوقيع به)", Kind.MOD)
                 SUBJ_UNOFFICIAL.containsMatchIn(c.subject) -> flag(20, "شهادة توقيع غير رسمية: ${c.subject}", Kind.MOD)
                 SUBJ_DEBUG.containsMatchIn(c.subject) -> flag(10, "موقّع بشهادة debug (نسخة تجريبية وليست نسخة نشر)", Kind.MOD)
-                SUBJ_SITE.containsMatchIn(c.subject) -> flag(10, "أُعيد توقيعه من موقع تحميل وليس من المطور: ${c.subject}", Kind.MOD)
+                SUBJ_SITE.containsMatchIn(c.subject) -> flag(10, "أُعيد توقيعه من موقع تحميل وليس من المطور: ${Regex("CN=([^,]+)").find(c.subject)?.groupValues?.get(1) ?: c.subject}", Kind.MOD)
             }
         }
     }
@@ -534,6 +545,7 @@ class Scanner(
     // ---------------- التحليل المعمّق للكود ----------------
     private inner class Deep(private val own: List<String>) {
         val counts = HashMap<String, Int>()
+        val counts2 = HashMap<String, Int>()
         val callers = Array(Rules.SENSITIVE_APIS.size) { HashSet<String>() }
         val beh = TreeMap<String, LinkedHashMap<String, TreeSet<String>>>()
         val strs = TreeMap<String, TreeSet<String>>()
@@ -555,7 +567,10 @@ class Scanner(
                 val cname = dex.className(c)
                 for (p in protectorPrefixes) if (cname.startsWith(p)) protectorHits.add(p)
                 val unknown = origin(cname, own) == "unknown"
-                if (unknown) counts.merge(pkgOf(cname), 1, Int::plus)
+                if (unknown) {
+                    counts.merge(pkgOf(cname), 1, Int::plus)
+                    counts2.merge(pkgOf(cname, 2), 1, Int::plus)
+                }
                 val pkg2 = if (unknown) pkgOf(cname, 2) else ""
                 dex.scanClass(c,
                     onInvoke = { m ->
@@ -571,19 +586,28 @@ class Scanner(
                         if (unknown) {
                             val v = dex.string(si)
                             strs.getOrPut(pkg2) { TreeSet() }.add(v)
-                            unknownStrings.add(v)
                         }
                     })
             }
         }
 
+        fun isInjected(pkg2: String) =
+            INJECT_NAMES.any { pkg2 == it || pkg2.startsWith("$it.") || it.startsWith("$pkg2.") } ||
+                injectedTokens.any { t -> pkg2.split('.').any { it == t } }
+
         fun report() {
+            injected = counts2.keys.filter { isInjected(it) }.toSet()
+            for (p in injected) strs[p]?.let { unknownStrings.addAll(it) }
             out("")
             out("تحليل معمّق للكود:", Tone.HEAD)
             if (counts.isNotEmpty()) {
-                out("كود ليس من المطور ولا من مكتبات مشهورة (على الأرجح مضاف):", Tone.WARN)
+                out("كود ليس من المطور ولا من مكتبات نعرفها:", Tone.WARN)
                 counts.entries.sortedWith(compareByDescending<Map.Entry<String, Int>> { it.value }.thenBy { it.key })
-                    .take(20).forEach { out("- ${it.key} (${it.value} كلاس)", Tone.NORMAL, 1) }
+                    .take(20).forEach {
+                        val inj = pkgOf("L" + it.key.replace('.', '/') + "/X;", 2) in injected
+                        out("- ${it.key} (${it.value} كلاس)" + if (inj) "  ← مضاف (أداة تعديل أو موقع التحميل)" else "  (غالباً مكتبة من التطبيق الأصلي)",
+                            if (inj) Tone.WARN else Tone.MUTED, 1)
+                    }
             } else {
                 out("كل الكود من المطور أو مكتبات مشهورة أو مُعمّى ✔", Tone.OK)
             }
@@ -597,16 +621,17 @@ class Scanner(
                 val kinds = HashMap<String, TreeSet<String>>()
                 for (c in callers[i]) kinds.getOrPut(origin(c, own)) { TreeSet() }.add(pkgOf(c))
                 val all = TreeSet<String>().apply { kinds.values.forEach { addAll(it) } }
-                val unk = kinds["unknown"]
-                out("- ${api.desc}: من ${all.take(6).joinToString(", ")}", if (unk != null) Tone.WARN else Tone.NORMAL, 1)
-                if (unk != null) flag(api.weight, "${api.desc} من كود مجهول: ${unk.take(5).joinToString(", ")}", Kind.ADDED)
+                val unk = callers[i].filter { origin(it, own) == "unknown" && pkgOf(it, 2) in injected }.map { pkgOf(it) }.toSortedSet()
+                out("- ${api.desc}: من ${all.take(6).joinToString(", ")}", if (unk.isNotEmpty()) Tone.WARN else Tone.NORMAL, 1)
+                if (unk.isNotEmpty()) flag(api.weight, "${api.desc} من كود مضاف: ${unk.take(5).joinToString(", ")}", Kind.ADDED)
                 else if (kinds["obf"] != null) flag(maxOf(3, api.weight / 3), "${api.desc} من كود مُعمّى (لا يمكن معرفة مصدره)")
             }
             if (!any) out("لا شيء ✔", Tone.OK, 1)
 
             for (pkg in (beh.keys + strs.keys).toSortedSet()) {
+                val inj = pkg in injected
                 out("")
-                out("سلوك الكود المضاف [$pkg]:", Tone.HEAD)
+                out(if (inj) "سلوك الكود المضاف [$pkg]:" else "مكتبة غير معروفة [$pkg] (${counts2[pkg] ?: 0} كلاس):", Tone.HEAD)
                 val cats = beh[pkg] ?: LinkedHashMap()
                 if (cats.keys.none { Rules.CATS.getValue(it).weight > 0 }) out("لا يستدعي أي وظيفة خطيرة ✔", Tone.OK, 1)
                 for ((cat, apis) in cats) {
@@ -614,7 +639,7 @@ class Scanner(
                     val tag = if (c.weight > 0) "⚠ " else "ℹ "
                     out(tag + c.desc + ": " + apis.map { shortApi(it) }.sorted().take(4).joinToString(", "),
                         if (c.weight > 0) Tone.BAD else Tone.INFO, 1)
-                    if (c.weight > 0) flag(c.weight, "كود مضاف [$pkg]: ${c.desc}", Kind.ADDED)
+                    if (c.weight > 0 && inj) flag(c.weight, "كود مضاف [$pkg]: ${c.desc}", Kind.ADDED)
                 }
                 val hits = (strs[pkg] ?: TreeSet()).filter { interesting(it) }
                 if (hits.isNotEmpty()) {
@@ -625,6 +650,7 @@ class Scanner(
                     val b = v.toByteArray(Charsets.UTF_8)
                     ByteScanner().apply { scan(b, b.size, "") }.let { it.domains.isNotEmpty() || it.ips.isNotEmpty() }
                 }
+                if (!inj) continue
                 if (unknownUrls.isNotEmpty())
                     flag(15, "كود مضاف [$pkg] يحتوي ${unknownUrls.size} رابط لمواقع غير مألوفة، مثل: ${unknownUrls.first().take(60)}", Kind.ADDED)
                 for (v in hits) {
@@ -645,16 +671,22 @@ class Scanner(
         val shown = r.flows.filter { it.origin != "known" }
         if (shown.none { it.sink != Sink.LOG }) out("لم نجد مساراً من بياناتك إلى الإنترنت أو SMS ✔", Tone.OK, 1)
         for (f in shown.sortedByDescending { it.sink.weight }) {
-            val tag = when (f.origin) { "unknown" -> " [كود مضاف]"; "obf" -> " [كود مُعمّى]"; else -> "" }
+            val inj = f.origin == "unknown" && f.where.split('.').take(2).joinToString(".") in injected
+            val tag = when {
+                inj -> " [كود مضاف]"
+                f.origin == "unknown" -> " [مكتبة غير معروفة]"
+                f.origin == "obf" -> " [كود مُعمّى]"
+                else -> ""
+            }
             val tone = when {
                 f.sink == Sink.LOG -> Tone.MUTED
-                f.origin == "unknown" -> Tone.BAD
+                inj -> Tone.BAD
                 else -> Tone.WARN
             }
             out("- ${f.sources.joinToString("، ") { it.label }} تصل إلى ${f.sink.label}، في ${f.where}$tag", tone, 1)
             if (f.sink != Sink.LOG) {
                 facts.flows.add(f)
-                if (f.origin == "unknown") flag(15, "كود مضاف (ليس من المطور) يرسل ${f.sources.joinToString("، ") { it.label }} إلى ${f.sink.label}", Kind.ADDED)
+                if (inj) flag(15, "كود مضاف (ليس من المطور) يرسل ${f.sources.joinToString("، ") { it.label }} إلى ${f.sink.label}", Kind.ADDED)
             }
         }
         out("حلّلنا ${r.analyzedMethods} وظيفة تلمس بياناتك من أصل ${r.totalMethods}", Tone.MUTED, 1)
@@ -663,7 +695,7 @@ class Scanner(
             out("")
             out("نصوص مشفّرة تُفك وقت التشغيل:", Tone.HEAD)
             for (d in r.decryptors.take(5)) {
-                val unknown = d.origin == "unknown"
+                val unknown = d.origin == "unknown" && d.method.split('.').take(2).joinToString(".") in injected
                 out("- ${d.method}: ${d.calls} نص", if (unknown) Tone.BAD else Tone.WARN, 1)
                 if (unknown) flag(10, "كود مضاف يُخفي نصوصه ويفكّها وقت التشغيل (${d.method})", Kind.ADDED)
                 else flag(5, "النصوص مشفّرة داخل الكود (تعمية تُصعّب الفحص)", Kind.MOD)
@@ -911,6 +943,9 @@ class Scanner(
             flag(15, "تعذّر تحليل جزء من التطبيق (ملف تالف أو مُعدّ لإفشال أدوات الفحص)")
         }
 
+        for (n in pendingComponents) {
+            if (pkgOf("L" + n.replace('.', '/') + ";", 2) in injected) flag(5, "خدمة أو مستقبِل مفتوح من كود مضاف: $n", Kind.ADDED)
+        }
         // الكود غير المعروف يُحسب خطراً فقط إذا ظهر أن التطبيق معدّل (وإلا فهو غالباً مكتبات خارجية عادية)
         val repack = findings.values.any { f -> f.kind == Kind.MOD && REPACK_SIGNS.any { f.message.contains(it) } }
         val added = findings.values.filter { it.kind == Kind.ADDED }

@@ -35,6 +35,7 @@ object Rules {
         ModTool("Lnp/dcc/".toByteArray(), 8, Kind.MOD, "NP Manager: جزء من الكود مُخفى داخل مكتبة native"),
         ModTool("Lnp/manager/".toByteArray(), 8, Kind.MOD, "NP Manager (أداة تعديل)"),
         ModTool("Lcom/chelpus/".toByteArray(), 15, Kind.MOD, "Lucky Patcher"),
+        ModTool("Lcom/android/support/Menu;".toByteArray(), 15, Kind.MOD, "قائمة غش مضافة (Mod Menu)"),
         ModTool("Lde/robv/android/xposed/".toByteArray(), 15, Kind.DANGER, "إطار Xposed للتلاعب بالتطبيق"),
         ModTool("Ltop/canyie/pine/".toByteArray(), 15, Kind.DANGER, "إطار Pine للتلاعب بالكود"),
         ModTool("Lcom/swift/sandhook/".toByteArray(), 15, Kind.DANGER, "إطار SandHook للتلاعب بالكود"),
@@ -147,6 +148,8 @@ object Rules {
         "rockstargames.com", "take2games.com", "youtube.com", "facebook.com", "unity3d.com",
         "unity.com", "microsoft.com", "apple.com", "mozilla.org", "khronos.org", "llvm.org",
         "gnu.org", "openssl.org", "chromium.org", "vulkan.org", "backtrace.io",
+        "app-measurement.com", "googlesource.com", "firebaseapp.com", "crashlytics.com", "flutter.dev", "dart.dev",
+        "example.com", "example.org", "example.net", "unrealengine.com", "epicgames.com", "github.com", "githubusercontent.com",
     )
 
     val WEAK_DET = Regex("PUP|Adware|Riskware|HackTool|Generic|Heur|Unwanted|Malct", RegexOption.IGNORE_CASE)
