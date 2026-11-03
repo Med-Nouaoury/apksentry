@@ -136,4 +136,4 @@ GitHub Actions يبني التطبيق ونسخة الحاسوب وينشرهم�
 
 It is a static scanner: it cannot see what native code does at runtime. Pair it with network monitoring (e.g. PCAPdroid) for modified apps.
 
-License: [MIT](LICENSE)
+License: [MIT](LICENSE). Font: IBM Plex Sans Arabic ([SIL OFL 1.1](licenses/IBM-Plex-Sans-Arabic-OFL.txt)). Icons: Material Icons (Apache 2.0).

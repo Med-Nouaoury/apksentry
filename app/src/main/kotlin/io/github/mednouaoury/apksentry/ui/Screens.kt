@@ -5,7 +5,18 @@ import android.content.Intent
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.border
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.Crossfade
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -17,29 +28,34 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
-import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Share
+import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.Button
-import androidx.compose.material3.Card
-import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.HorizontalDivider
-import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.NavigationBar
+import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
-import androidx.compose.material3.Tab
-import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
-import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
@@ -48,132 +64,230 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.rotate
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import io.github.mednouaoury.apksentry.ScanViewModel
 import io.github.mednouaoury.apksentry.UiState
-import io.github.mednouaoury.apksentry.core.Finding
 import io.github.mednouaoury.apksentry.core.RiskLevel
 import io.github.mednouaoury.apksentry.core.ScanResult
 import io.github.mednouaoury.apksentry.core.Section
 import io.github.mednouaoury.apksentry.core.Tone
+import io.github.mednouaoury.apksentry.net.NetMonitor
 
-@OptIn(ExperimentalMaterial3Api::class)
+// =====================================================================
+// الهيكل العام: رأس + محتوى + شريط تنقّل سفلي
+// =====================================================================
 @Composable
 fun ApkSentryApp(vm: ScanViewModel) {
     val state by vm.state.collectAsStateWithLifecycle()
-    val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
-        if (uri != null) vm.scan(uri)
-    }
+    val monitoring by NetMonitor.session.collectAsStateWithLifecycle()
     var tab by rememberSaveable { mutableStateOf(0) }
+    val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) { tab = 0; vm.scan(uri) }
+    }
     BackHandler(enabled = tab == 0 && (state is UiState.Done || state is UiState.Failed)) { vm.reset() }
+    BackHandler(enabled = tab == 1) { tab = 0 }
 
-    Scaffold(topBar = {
-        Column {
-            TopAppBar(title = { Text("ApkSentry", fontWeight = FontWeight.Bold) })
-            TabRow(selectedTabIndex = tab) {
-                Tab(selected = tab == 0, onClick = { tab = 0 }, text = { Text("فحص ملف") })
-                Tab(selected = tab == 1, onClick = { tab = 1 }, text = { Text("مراقبة الاتصال") })
+    Scaffold(
+        containerColor = MaterialTheme.colorScheme.background,
+        topBar = { AppHeader() },
+        bottomBar = {
+            NavigationBar(containerColor = MaterialTheme.colorScheme.surfaceContainerLow) {
+                NavigationBarItem(
+                    selected = tab == 0, onClick = { tab = 0 },
+                    icon = { Icon(AppIcons.Shield, null) }, label = { Text("الفحص") },
+                )
+                NavigationBarItem(
+                    selected = tab == 1, onClick = { tab = 1 },
+                    icon = {
+                        Box {
+                            Icon(AppIcons.Wifi, null)
+                            if (monitoring != null) Box(Modifier.align(Alignment.TopEnd)) { Dot(StatusColors.ok(), 8.dp) }
+                        }
+                    },
+                    label = { Text(if (monitoring != null) "المراقبة (تعمل)" else "المراقبة") },
+                )
             }
-        }
-    }) { padding ->
+        },
+    ) { padding ->
         Box(Modifier.fillMaxSize().padding(padding)) {
-            if (tab == 1) MonitorScreen() else when (val s = state) {
-                UiState.Idle -> HomeScreen(vm) { picker.launch(arrayOf("*/*")) }
-                is UiState.Scanning -> ScanningScreen(s) { vm.cancel() }
-                is UiState.Done -> ResultScreen(s.result, vm) { vm.reset() }
-                is UiState.Failed -> ErrorScreen(s.message) { vm.reset() }
+            Crossfade(targetState = tab, label = "tab") { t ->
+                if (t == 1) MonitorScreen() else when (val s = state) {
+                    UiState.Idle -> HomeScreen(vm) { picker.launch(arrayOf("*/*")) }
+                    is UiState.Scanning -> ScanningScreen(s) { vm.cancel() }
+                    is UiState.Done -> ResultScreen(s.result, vm) { vm.reset() }
+                    is UiState.Failed -> ErrorScreen(s.message) { vm.reset() }
+                }
             }
         }
     }
 }
 
-// ---------------- الشاشة الرئيسية ----------------
+@Composable
+private fun AppHeader() {
+    Row(
+        Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.background).statusBarsPadding()
+            .padding(horizontal = 20.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        Box(
+            Modifier.size(42.dp).clip(RoundedCornerShape(14.dp))
+                .background(Brush.linearGradient(listOf(MaterialTheme.colorScheme.primary, MaterialTheme.colorScheme.secondary))),
+            contentAlignment = Alignment.Center,
+        ) { Icon(AppIcons.Verified, null, tint = Color.White, modifier = Modifier.size(24.dp)) }
+        Column {
+            Text("ApkSentry", style = MaterialTheme.typography.titleLarge)
+            Text("حارس تطبيقاتك قبل التثبيت", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+    }
+}
+
+// =====================================================================
+// الشاشة الرئيسية
+// =====================================================================
 @Composable
 private fun HomeScreen(vm: ScanViewModel, onPick: () -> Unit) {
     var showSettings by rememberSaveable { mutableStateOf(false) }
-    Column(
-        Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp),
+    LazyColumn(
+        Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 4.dp, bottom = 24.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
-        Text("افحص التطبيق قبل تثبيته", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
-        Text(
-            "اختر ملف APK أو APKS أو XAPK. الفحص يتم كاملاً على هاتفك: الصلاحيات، التوقيع ومقارنته بالنسخة الرسمية، " +
-                "الكود المضاف، تتبّع بياناتك من مصدرها حتى الإنترنت، سلوكيات الفيروسات المعروفة، أدوات الحماية والتشفير، " +
-                "وتحليل المكتبات native من الداخل.",
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        Button(onClick = onPick, modifier = Modifier.fillMaxWidth().height(56.dp)) {
-            Text("اختر ملفاً للفحص", fontSize = 17.sp)
+        item { HomeHero(onPick) }
+        item { Text("ماذا نفحص؟", style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(top = 4.dp)) }
+        item {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                FeatureRow(
+                    Feature(AppIcons.Verified, "التوقيع", "هل الملف من المطور؟ وهل تغيّر بعد توقيعه؟"),
+                    Feature(AppIcons.Code, "تتبّع بياناتك", "هل تصل رسائلك أو موقعك أو ما تنسخه للإنترنت؟"),
+                )
+                FeatureRow(
+                    Feature(AppIcons.Bug, "سلوك الفيروسات", "أكثر من 20 نمطاً لعائلات خبيثة معروفة"),
+                    Feature(AppIcons.Chip, "المكتبات native", "استدعاءات نظام مخفية وكود مشفّر"),
+                )
+                FeatureRow(
+                    Feature(AppIcons.Shield, "الثغرات", "SSL مكسور، تشفير ضعيف، WebView خطير"),
+                    Feature(AppIcons.Database, "قواعد الفيروسات", "MalwareBazaar و VirusTotal (اختياري)"),
+                )
+            }
         }
+        item { SettingsCard(vm, showSettings) { showSettings = !showSettings } }
+        item {
+            Text(
+                "الفحص يتم كاملاً على هاتفك، ولا يُرفع أي ملف. الفحص ثابت (لا يشغّل التطبيق)، ولمعرفة ما يفعله وقت التشغيل استعمل تبويب المراقبة.",
+                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp),
+            )
+        }
+    }
+}
 
-        Card(Modifier.fillMaxWidth()) {
-            Column(Modifier.fillMaxWidth()) {
-                Row(
-                    Modifier.fillMaxWidth().clickable { showSettings = !showSettings }.padding(16.dp),
-                    verticalAlignment = Alignment.CenterVertically,
+@Composable
+private fun HomeHero(onPick: () -> Unit) {
+    val cs = MaterialTheme.colorScheme
+    Surface(shape = MaterialTheme.shapes.extraLarge, color = cs.surfaceContainerLow, border = BorderStroke(1.dp, cs.outlineVariant)) {
+        Box(Modifier.background(Brush.linearGradient(listOf(cs.primary.copy(alpha = 0.22f), cs.secondary.copy(alpha = 0.10f), Color.Transparent)))) {
+            Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                Box(
+                    Modifier.size(64.dp).clip(RoundedCornerShape(20.dp)).background(cs.primary.copy(alpha = 0.18f)),
+                    contentAlignment = Alignment.Center,
+                ) { Icon(AppIcons.Verified, null, tint = cs.primary, modifier = Modifier.size(36.dp)) }
+                Text("افحص التطبيق قبل تثبيته", style = MaterialTheme.typography.headlineSmall)
+                Text(
+                    "اختر ملف APK أو APKS أو XAPK، وسنقرأه من الداخل ونخبرك إن كان معدّلاً أو يخفي سلوكاً خطيراً.",
+                    style = MaterialTheme.typography.bodyMedium, color = cs.onSurfaceVariant,
+                )
+                Button(
+                    onClick = onPick,
+                    modifier = Modifier.fillMaxWidth().height(56.dp),
+                    shape = MaterialTheme.shapes.medium,
                 ) {
-                    Text("إعدادات اختيارية", style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f))
-                    Text(if (showSettings) "▲" else "▼")
-                }
-                if (showSettings) {
-                    Column(
-                        Modifier.padding(start = 16.dp, end = 16.dp, bottom = 16.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp),
-                    ) {
-                        OutlinedTextField(
-                            value = vm.vtKey,
-                            onValueChange = vm::updateVtKey,
-                            label = { Text("مفتاح VirusTotal API") },
-                            singleLine = true,
-                            visualTransformation = PasswordVisualTransformation(),
-                            modifier = Modifier.fillMaxWidth(),
-                        )
-                        Hint("نرسل بصمة الملفات (SHA-256) فقط، لا الملفات نفسها. الحساب المجاني يسمح بـ 4 طلبات في الدقيقة، فيصبح الفحص أبطأ.")
-                        OutlinedTextField(
-                            value = vm.mbKey,
-                            onValueChange = vm::updateMbKey,
-                            label = { Text("مفتاح MalwareBazaar") },
-                            singleLine = true,
-                            visualTransformation = PasswordVisualTransformation(),
-                            modifier = Modifier.fillMaxWidth(),
-                        )
-                        Hint("قاعدة بيانات مجانية للفيروسات المعروفة. المفتاح مجاني من auth.abuse.ch. نرسل البصمة فقط.")
-                        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                            Column(Modifier.weight(1f)) {
-                                Text("تتبّع البيانات الشخصية", style = MaterialTheme.typography.bodyMedium)
-                                Hint("أعمق لكنه أبطأ قليلاً في التطبيقات الكبيرة.")
-                            }
-                            Switch(checked = vm.dataFlow, onCheckedChange = vm::updateDataFlow)
-                        }
-                        OutlinedTextField(
-                            value = vm.expectedCert,
-                            onValueChange = vm::updateExpectedCert,
-                            label = { Text("بصمة شهادة المطور الرسمية (SHA-256)") },
-                            singleLine = true,
-                            modifier = Modifier.fillMaxWidth(),
-                        )
-                        Hint("إذا عرفت بصمة المطور، يتأكد الفحص أن الملف موقَّع منه هو.")
-                    }
+                    Icon(AppIcons.Folder, null, modifier = Modifier.size(20.dp))
+                    Spacer(Modifier.width(10.dp))
+                    Text("اختر ملفاً للفحص", style = MaterialTheme.typography.titleMedium)
                 }
             }
         }
+    }
+}
 
-        Card(Modifier.fillMaxWidth()) {
-            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                Text("حدود الفحص", style = MaterialTheme.typography.titleSmall)
-                Hint(
-                    "هذا فحص ثابت: لا يشغّل التطبيق. الكود المخفي داخل مكتبات native لا يظهر سلوكه هنا. " +
-                        "لذلك راقب أول تشغيل بتطبيق PCAPdroid، وامنع التطبيق من الإنترنت إذا لم يكن يحتاجه.",
+private class Feature(val icon: ImageVector, val title: String, val sub: String)
+
+@Composable
+private fun FeatureRow(a: Feature, b: Feature) {
+    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+        FeatureTile(a, Modifier.weight(1f))
+        FeatureTile(b, Modifier.weight(1f))
+    }
+}
+
+@Composable
+private fun FeatureTile(f: Feature, modifier: Modifier) {
+    val cs = MaterialTheme.colorScheme
+    Surface(modifier.height(132.dp), shape = MaterialTheme.shapes.large, color = cs.surfaceContainerLow, border = BorderStroke(1.dp, cs.outlineVariant)) {
+        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            IconBadge(f.icon, cs.primary, 34.dp)
+            Text(f.title, style = MaterialTheme.typography.titleSmall)
+            Text(f.sub, style = MaterialTheme.typography.bodySmall, color = cs.onSurfaceVariant, maxLines = 2, overflow = TextOverflow.Ellipsis)
+        }
+    }
+}
+
+@Composable
+private fun SettingsCard(vm: ScanViewModel, open: Boolean, onToggle: () -> Unit) {
+    val rotation by animateFloatAsState(if (open) 180f else 0f, label = "arrow")
+    SectionCard(
+        title = "إعدادات متقدمة",
+        icon = AppIcons.Tune,
+        accent = MaterialTheme.colorScheme.secondary,
+        modifier = Modifier.clickable(onClick = onToggle),
+        trailing = { Icon(Icons.Filled.KeyboardArrowDown, null, modifier = Modifier.rotate(rotation)) },
+    ) {
+        if (!open) Hint("مفاتيح قواعد الفيروسات، بصمة المطور، وتتبّع البيانات")
+        AnimatedVisibility(open) {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                OutlinedTextField(
+                    value = vm.mbKey, onValueChange = vm::updateMbKey, singleLine = true,
+                    label = { Text("مفتاح MalwareBazaar") }, visualTransformation = PasswordVisualTransformation(),
+                    modifier = Modifier.fillMaxWidth(), shape = MaterialTheme.shapes.medium,
                 )
+                Hint("قاعدة بيانات مجانية للفيروسات المعروفة. المفتاح مجاني من auth.abuse.ch. نرسل البصمة فقط.")
+                OutlinedTextField(
+                    value = vm.vtKey, onValueChange = vm::updateVtKey, singleLine = true,
+                    label = { Text("مفتاح VirusTotal") }, visualTransformation = PasswordVisualTransformation(),
+                    modifier = Modifier.fillMaxWidth(), shape = MaterialTheme.shapes.medium,
+                )
+                Hint("أكثر من 70 برنامج حماية. الحساب المجاني بطيء (4 طلبات في الدقيقة). نرسل البصمة فقط.")
+                OutlinedTextField(
+                    value = vm.expectedCert, onValueChange = vm::updateExpectedCert, singleLine = true,
+                    label = { Text("بصمة شهادة المطور (SHA-256)") },
+                    modifier = Modifier.fillMaxWidth(), shape = MaterialTheme.shapes.medium,
+                )
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text("تتبّع البيانات الشخصية", style = MaterialTheme.typography.bodyMedium)
+                        Hint("أعمق، لكنه أبطأ قليلاً في التطبيقات الكبيرة")
+                    }
+                    Switch(checked = vm.dataFlow, onCheckedChange = vm::updateDataFlow)
+                }
             }
         }
     }
@@ -184,7 +298,20 @@ internal fun Hint(text: String) {
     Text(text, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
 }
 
-// ---------------- أثناء الفحص ----------------
+// =====================================================================
+// أثناء الفحص
+// =====================================================================
+private val STAGES = listOf("قراءة الملف والتوقيع", "تحليل الكود", "تتبّع البيانات والثغرات", "المكتبات native", "قواعد بيانات الفيروسات", "تجهيز النتيجة")
+
+private fun stageOf(msg: String): Int = when {
+    "كتابة النتيجة" in msg -> 5
+    "VirusTotal" in msg || "MalwareBazaar" in msg || "بصمة" in msg -> 4
+    ".so" in msg -> 3
+    "تدفّق" in msg || "الثغرات" in msg -> 2
+    "classes" in msg || ".dex" in msg -> 1
+    else -> 0
+}
+
 @Composable
 private fun ScanningScreen(s: UiState.Scanning, onCancel: () -> Unit) {
     val view = LocalView.current
@@ -192,273 +319,309 @@ private fun ScanningScreen(s: UiState.Scanning, onCancel: () -> Unit) {
         view.keepScreenOn = true
         onDispose { view.keepScreenOn = false }
     }
-    Column(
-        Modifier.fillMaxSize().padding(24.dp),
-        verticalArrangement = Arrangement.Center,
-        horizontalAlignment = Alignment.CenterHorizontally,
+    val cs = MaterialTheme.colorScheme
+    var stage by remember { mutableStateOf(0) }
+    LaunchedEffect(s.message) { stage = maxOf(stage, stageOf(s.message)) }
+    val progress by animateFloatAsState(s.fraction.coerceIn(0f, 1f), tween(400), label = "p")
+    val spin by rememberInfiniteTransition(label = "spin").animateFloat(
+        0f, 360f, infiniteRepeatable(tween(1600, easing = LinearEasing)), label = "a",
+    )
+
+    LazyColumn(
+        Modifier.fillMaxSize(), contentPadding = PaddingValues(20.dp),
+        horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(18.dp),
     ) {
-        Text(s.fileName, style = MaterialTheme.typography.titleMedium, textAlign = TextAlign.Center)
-        Spacer(Modifier.height(20.dp))
-        LinearProgressIndicator(progress = { s.fraction.coerceIn(0f, 1f) }, modifier = Modifier.fillMaxWidth())
-        Spacer(Modifier.height(8.dp))
-        Text("${(s.fraction.coerceIn(0f, 1f) * 100).toInt()}%", fontWeight = FontWeight.Bold)
-        Text(
-            s.message,
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            textAlign = TextAlign.Center,
-        )
-        Spacer(Modifier.height(24.dp))
-        Hint("الملفات الكبيرة مثل الألعاب قد تأخذ بضع دقائق. أبقِ التطبيق مفتوحاً.")
-        Spacer(Modifier.height(16.dp))
-        OutlinedButton(onClick = onCancel) { Text("إلغاء") }
+        item {
+            Box(Modifier.size(200.dp).padding(top = 8.dp), contentAlignment = Alignment.Center) {
+                val track = cs.outlineVariant
+                val primary = cs.primary
+                val secondary = cs.secondary
+                Canvas(Modifier.fillMaxSize()) {
+                    val w = 12.dp.toPx()
+                    val tl = Offset(w / 2, w / 2)
+                    val sz = Size(size.width - w, size.height - w)
+                    drawArc(track, 0f, 360f, false, tl, sz, style = Stroke(w))
+                    drawArc(primary, -90f, 360f * progress, false, tl, sz, style = Stroke(w, cap = StrokeCap.Round))
+                    drawArc(secondary.copy(alpha = 0.6f), spin, 40f, false, Offset(w * 2, w * 2), Size(size.width - w * 4, size.height - w * 4), style = Stroke(w / 3, cap = StrokeCap.Round))
+                }
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text("${(progress * 100).toInt()}%", fontSize = 40.sp, fontWeight = FontWeight.Bold, fontFamily = PlexArabic, color = cs.primary)
+                    Text("جارٍ الفحص", style = MaterialTheme.typography.labelMedium, color = cs.onSurfaceVariant)
+                }
+            }
+        }
+        item {
+            Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text(s.fileName, style = MaterialTheme.typography.titleMedium, textAlign = TextAlign.Center, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                Crossfade(targetState = s.message, label = "msg") { m ->
+                    Text(m, style = MaterialTheme.typography.bodySmall, color = cs.onSurfaceVariant, textAlign = TextAlign.Center, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
+            }
+        }
+        item {
+            Surface(shape = MaterialTheme.shapes.large, color = cs.surfaceContainerLow, border = BorderStroke(1.dp, cs.outlineVariant), modifier = Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    STAGES.forEachIndexed { i, name ->
+                        val done = i < stage
+                        val current = i == stage
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                            when {
+                                done -> Icon(Icons.Filled.CheckCircle, null, tint = StatusColors.ok(), modifier = Modifier.size(20.dp))
+                                current -> Box(Modifier.size(20.dp), contentAlignment = Alignment.Center) { Dot(cs.primary, 12.dp) }
+                                else -> Box(Modifier.size(20.dp), contentAlignment = Alignment.Center) { Dot(cs.outlineVariant, 10.dp) }
+                            }
+                            Text(
+                                name, style = MaterialTheme.typography.bodyMedium,
+                                color = if (done || current) cs.onSurface else cs.onSurfaceVariant,
+                                fontWeight = if (current) FontWeight.SemiBold else FontWeight.Normal,
+                            )
+                        }
+                    }
+                }
+            }
+        }
+        item { Hint("الملفات الكبيرة مثل الألعاب قد تأخذ بضع دقائق. أبقِ التطبيق مفتوحاً.") }
+        item { OutlinedButton(onClick = onCancel, shape = MaterialTheme.shapes.medium) { Text("إلغاء الفحص") } }
     }
 }
 
-// ---------------- النتيجة ----------------
+// =====================================================================
+// النتيجة
+// =====================================================================
+@Composable
+private fun levelColor(level: RiskLevel): Color = when (level) {
+    RiskLevel.LOW -> StatusColors.ok()
+    RiskLevel.LOW_MEDIUM -> StatusColors.warn()
+    RiskLevel.MEDIUM -> StatusColors.warn()
+    RiskLevel.HIGH -> StatusColors.bad()
+}
+
+private fun levelTitle(level: RiskLevel) = when (level) {
+    RiskLevel.LOW -> "لا توجد علامات خطيرة"
+    RiskLevel.LOW_MEDIUM -> "ملاحظات بسيطة"
+    RiskLevel.MEDIUM -> "يستحق الحذر"
+    RiskLevel.HIGH -> "خطر مرتفع"
+}
+
+private fun levelShort(level: RiskLevel) = when (level) {
+    RiskLevel.LOW -> "منخفض"
+    RiskLevel.LOW_MEDIUM -> "منخفض إلى متوسط"
+    RiskLevel.MEDIUM -> "متوسط"
+    RiskLevel.HIGH -> "مرتفع"
+}
+
 @Composable
 private fun ResultScreen(r: ScanResult, vm: ScanViewModel, onNew: () -> Unit) {
     val ctx = LocalContext.current
     val saver = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("text/plain")) { uri ->
-        if (uri != null) {
-            runCatching {
-                ctx.contentResolver.openOutputStream(uri)?.use { it.write(r.toText().toByteArray(Charsets.UTF_8)) }
-            }
-        }
+        if (uri != null) runCatching { ctx.contentResolver.openOutputStream(uri)?.use { it.write(r.toText().toByteArray(Charsets.UTF_8)) } }
     }
     val expanded = remember { mutableStateMapOf<Int, Boolean>() }
     var trusted by remember { mutableStateOf(vm.isTrusted(r)) }
+    val bad = StatusColors.bad()
+    val warn = StatusColors.warn()
+    val ok = StatusColors.ok()
+    val info = StatusColors.info()
+    val dangers = if (r.behaviors.isNotEmpty()) r.dangers.filterNot { it.message.startsWith("سلوك: ") } else r.dangers
 
     LazyColumn(
         Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(16.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
+        contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 4.dp, bottom = 24.dp),
+        verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
-        item { SummaryCard(r) }
+        item { VerdictHero(r) }
         item {
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Button(onClick = { share(ctx, r) }, modifier = Modifier.weight(1f)) { Text("مشاركة") }
-                OutlinedButton(
-                    onClick = { saver.launch("apk_report_${r.fileName.substringBeforeLast('.')}.txt") },
-                    modifier = Modifier.weight(1f),
-                ) { Text("حفظ") }
-                OutlinedButton(onClick = onNew, modifier = Modifier.weight(1f)) { Text("ملف آخر") }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                StatTile("${r.behaviors.size}", "سلوك خبيث", if (r.behaviors.isEmpty()) ok else bad, Modifier.weight(1f))
+                StatTile("${r.vulns.size}", "ثغرات", if (r.vulns.any { it.severity >= 3 }) bad else if (r.vulns.isNotEmpty()) warn else ok, Modifier.weight(1f))
+                StatTile("${r.secrets.size}", "أسرار", if (r.secrets.any { it.suspicious }) bad else if (r.secrets.isNotEmpty()) warn else ok, Modifier.weight(1f))
+                StatTile("${r.unusualDomains.size}", "مواقع غريبة", if (r.unusualDomains.isNotEmpty()) warn else ok, Modifier.weight(1f))
             }
         }
-        if (r.behaviors.isNotEmpty()) {
-            item { FindingsCard("🧬 سلوكيات تشبه برامج خبيثة معروفة", r.behaviors, Tone.BAD) }
-        }
         item {
-            if (r.dangers.isEmpty()) TextCard("⛔ علامات خطر", listOf("لا شيء ✔"), Tone.OK)
-            else FindingsCard("⛔ علامات خطر", r.dangers, Tone.BAD)
-        }
-        item {
-            if (r.mods.isEmpty()) TextCard("🔧 علامات تعديل", listOf("لا شيء، يبدو أصلياً ✔"), Tone.OK)
-            else FindingsCard("🔧 علامات تعديل (ليست خطراً بحد ذاتها)", r.mods, Tone.WARN)
-        }
-        if (r.vulns.isNotEmpty()) item { VulnCard(r) }
-        if (r.secrets.isNotEmpty()) {
-            item {
-                TextCard("🔑 أسرار مكتوبة داخل التطبيق", r.secrets.map { "${it.kind}: ${it.masked}" },
-                    if (r.secrets.any { it.suspicious }) Tone.BAD else Tone.WARN, bullets = true)
-            }
-        }
-        if (r.advice.isNotEmpty()) item { TextCard("💡 نصائح", r.advice, Tone.INFO, bullets = true) }
-        if (r.unusualDomains.isNotEmpty()) {
-            item {
-                val shown = r.unusualDomains.take(40) +
-                    if (r.unusualDomains.size > 40) listOf("... و${r.unusualDomains.size - 40} أخرى") else emptyList()
-                TextCard("🌐 مواقع غير مألوفة في الكود (${r.unusualDomains.size})", shown, Tone.NORMAL)
-            }
-        }
-        if (r.notes.isNotEmpty()) item { TextCard("ملاحظات", r.notes, Tone.MUTED, bullets = true) }
-        if (r.packageName != null && r.signers.isNotEmpty()) {
-            item {
-                Card(Modifier.fillMaxWidth()) {
-                    Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text("🔏 التوقيع الرسمي", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
-                        if (trusted) {
-                            Text("هذا التوقيع محفوظ في قائمتك الموثوقة لـ ${r.packageName} ✔", color = StatusColors.ok())
-                        } else {
-                            Hint("إذا كان هذا الملف من مصدر رسمي (المطور أو Google Play)، احفظ توقيعه. أي نسخة لاحقة بتوقيع مختلف ستُكشف أنها ليست من المطور.")
-                            OutlinedButton(onClick = { vm.trustSigner(r); trusted = true }) { Text("هذا ملف رسمي: احفظ توقيعه") }
-                        }
-                    }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Button(onClick = { share(ctx, r) }, modifier = Modifier.weight(1f), shape = MaterialTheme.shapes.medium) {
+                    Icon(Icons.Filled.Share, null, Modifier.size(18.dp)); Spacer(Modifier.width(6.dp)); Text("مشاركة")
+                }
+                FilledTonalButton(
+                    onClick = { saver.launch("apksentry_${r.fileName.substringBeforeLast('.')}.txt") },
+                    modifier = Modifier.weight(1f), shape = MaterialTheme.shapes.medium,
+                ) { Text("حفظ التقرير") }
+                OutlinedButton(onClick = onNew, modifier = Modifier.weight(1f), shape = MaterialTheme.shapes.medium) {
+                    Icon(Icons.Filled.Refresh, null, Modifier.size(18.dp)); Spacer(Modifier.width(6.dp)); Text("ملف آخر")
                 }
             }
         }
-        item {
-            Text(
-                "التفاصيل (اضغط على أي قسم)",
-                style = MaterialTheme.typography.titleMedium,
-                modifier = Modifier.padding(top = 8.dp),
-            )
-        }
-        itemsIndexed(r.sections) { i, sec ->
-            SectionCard(sec, expanded[i] == true) { expanded[i] = expanded[i] != true }
+        if (r.behaviors.isNotEmpty()) item {
+            SectionCard("سلوكيات تشبه برامج خبيثة معروفة", AppIcons.Bug, bad) {
+                r.behaviors.forEach { FindingLine(it.message, bad, badge = "${it.weight}") }
+            }
         }
         item {
-            Hint("تذكير: هذا فحص ثابت (لا يشغّل التطبيق)، ولا يوجد فحص يضمن الأمان 100%.")
-        }
-    }
-}
-
-@Composable
-private fun SummaryCard(r: ScanResult) {
-    val riskColor = when (r.level) {
-        RiskLevel.LOW -> StatusColors.ok()
-        RiskLevel.LOW_MEDIUM, RiskLevel.MEDIUM -> StatusColors.warn()
-        RiskLevel.HIGH -> StatusColors.bad()
-    }
-    val modColor = if (r.isModified) StatusColors.warn() else StatusColors.ok()
-    Card(Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(16.dp)) {
-            Text(r.fileName, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-            r.packageName?.let { Hint(it) }
-            Spacer(Modifier.height(12.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                ScoreBox("درجة الخطر", r.riskScore, r.level.label, riskColor, Modifier.weight(1f))
-                ScoreBox("درجة التعديل", r.modScore, if (r.isModified) "معدّل" else "أصلي على الأرجح", modColor, Modifier.weight(1f))
+            SectionCard("علامات الخطر", AppIcons.Shield, if (dangers.isEmpty()) ok else bad) {
+                if (dangers.isEmpty()) Text("لا شيء ✔", color = ok)
+                dangers.forEach { FindingLine(it.message, if (it.weight >= 15) bad else warn, badge = "${it.weight}") }
             }
-            Spacer(Modifier.height(12.dp))
-            Text(r.level.explanation, style = MaterialTheme.typography.bodyMedium)
-            if (r.integrityVerified) Text("✔ التوقيع سليم: الملف لم يتغيّر بعد توقيعه", color = StatusColors.ok(), style = MaterialTheme.typography.bodySmall)
-            if (r.vulns.isNotEmpty()) {
-                val high = r.vulns.count { it.severity >= 3 }
-                Text("🛡 ثغرات أمنية في التطبيق: ${r.vulns.size}" + if (high > 0) " ($high عالية)" else "",
-                    color = if (high > 0) StatusColors.bad() else StatusColors.warn(), style = MaterialTheme.typography.bodySmall)
-            }
-            Hint("مدة الفحص: ${r.durationMs / 1000} ثانية")
         }
-    }
-}
-
-@Composable
-private fun ScoreBox(title: String, score: Int, label: String, color: Color, modifier: Modifier) {
-    Column(
-        modifier.border(1.dp, color, RoundedCornerShape(12.dp)).padding(12.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-    ) {
-        Text(title, style = MaterialTheme.typography.labelMedium)
-        Text("$score", fontSize = 36.sp, fontWeight = FontWeight.Bold, color = color)
-        Text("من 100", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        Text(label, style = MaterialTheme.typography.bodyMedium, color = color, textAlign = TextAlign.Center)
-    }
-}
-
-@Composable
-private fun FindingsCard(title: String, findings: List<Finding>, tone: Tone) {
-    val color = StatusColors.forTone(tone)
-    Card(Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text(title, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold, color = color)
-            SelectionContainer {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    findings.forEach { f ->
-                        Row {
-                            Text("[${f.weight}]", color = color, fontWeight = FontWeight.Bold, modifier = Modifier.width(44.dp))
-                            Text(f.message, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
-                        }
-                    }
+        item {
+            SectionCard("علامات التعديل", AppIcons.Code, if (r.mods.isEmpty()) ok else warn) {
+                if (r.mods.isEmpty()) Text("لا شيء، يبدو أصلياً ✔", color = ok)
+                else Hint("التعديل ليس خطراً بحد ذاته، لكنه يعني أن التطبيق ليس كما نشره المطور.")
+                r.mods.forEach { FindingLine(it.message, warn, badge = "${it.weight}") }
+            }
+        }
+        if (r.vulns.isNotEmpty()) item {
+            SectionCard("ثغرات في التطبيق نفسه", AppIcons.Block, if (r.vulns.any { it.severity >= 3 }) bad else warn) {
+                Hint("أخطاء أمنية تجعل التطبيق سهل الاختراق، وليست سلوكاً خبيثاً. لا تدخل في درجة الخطر.")
+                r.vulns.forEach { v ->
+                    val (label, c) = when (v.severity) { 3 -> "عالية" to bad; 2 -> "متوسطة" to warn; else -> "منخفضة" to info }
+                    FindingLine(v.title, c, badge = label, sub = v.where.ifEmpty { null })
                 }
             }
         }
-    }
-}
-
-@Composable
-private fun VulnCard(r: ScanResult) {
-    Card(Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text("🛡 ثغرات تجعل التطبيق نفسه غير آمن", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
-            Hint("هذه أخطاء أمنية في التطبيق (وليست سلوكاً خبيثاً)، لا تدخل في درجة الخطر.")
-            SelectionContainer {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    r.vulns.forEach { v ->
-                        val (label, tone) = when (v.severity) {
-                            3 -> "عالية" to Tone.BAD
-                            2 -> "متوسطة" to Tone.WARN
-                            else -> "منخفضة" to Tone.MUTED
-                        }
-                        Column {
-                            Text("[$label] ${v.title}", color = StatusColors.forTone(tone), style = MaterialTheme.typography.bodyMedium)
-                            if (v.where.isNotEmpty()) Hint(v.where)
-                        }
-                    }
-                }
+        if (r.secrets.isNotEmpty()) item {
+            SectionCard("أسرار مكتوبة داخل التطبيق", AppIcons.Key, if (r.secrets.any { it.suspicious }) bad else warn) {
+                r.secrets.forEach { FindingLine(it.kind, if (it.suspicious) bad else warn, sub = it.masked) }
             }
         }
-    }
-}
-
-@Composable
-private fun TextCard(title: String, lines: List<String>, tone: Tone, bullets: Boolean = false) {
-    Card(Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            Text(title, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
-            SelectionContainer {
-                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    lines.forEach {
-                        Text(
-                            (if (bullets) "• " else "") + it,
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = StatusColors.forTone(tone),
-                        )
-                    }
-                }
+        if (r.advice.isNotEmpty()) item {
+            SectionCard("نصائح", AppIcons.Verified, info) {
+                r.advice.forEach { FindingLine(it, info) }
             }
         }
-    }
-}
-
-@Composable
-private fun SectionCard(sec: Section, open: Boolean, onToggle: () -> Unit) {
-    Card(Modifier.fillMaxWidth()) {
-        Column(Modifier.fillMaxWidth()) {
-            Row(
-                Modifier.fillMaxWidth().clickable(onClick = onToggle).padding(16.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Text(sec.title, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
-                Text(if (open) "▲" else "▼")
-            }
-            if (open) {
-                HorizontalDivider()
+        if (r.unusualDomains.isNotEmpty()) item {
+            SectionCard("مواقع غير مألوفة في الكود", AppIcons.Globe, warn, trailing = { Pill("${r.unusualDomains.size}", warn) }) {
                 SelectionContainer {
-                    Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                        sec.lines.forEach { l ->
-                            if (l.text.isEmpty()) {
-                                Spacer(Modifier.height(4.dp))
-                            } else {
-                                Text(
-                                    l.text,
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = StatusColors.forTone(l.tone),
-                                    fontWeight = if (l.tone == Tone.HEAD) FontWeight.Bold else null,
-                                    modifier = Modifier.padding(start = (l.indent * 12).dp),
-                                )
+                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        r.unusualDomains.take(40).forEach { d ->
+                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Dot(warn, 6.dp); Text(d, style = MaterialTheme.typography.bodyMedium, fontFamily = FontFamily.Monospace)
                             }
                         }
                     }
                 }
             }
         }
+        if (r.packageName != null && r.signers.isNotEmpty()) item {
+            SectionCard("التوقيع الرسمي", AppIcons.Verified, if (trusted) ok else MaterialTheme.colorScheme.primary) {
+                if (trusted) Text("هذا التوقيع محفوظ في قائمتك الموثوقة ✔", color = ok)
+                else {
+                    Hint("إذا كان هذا الملف من مصدر رسمي (المطور أو Google Play)، احفظ توقيعه. أي نسخة لاحقة بتوقيع مختلف ستُكشف.")
+                    FilledTonalButton(onClick = { vm.trustSigner(r); trusted = true }, shape = MaterialTheme.shapes.medium) {
+                        Text("هذا ملف رسمي: احفظ توقيعه")
+                    }
+                }
+            }
+        }
+        if (r.notes.isNotEmpty()) item {
+            SectionCard("ملاحظات", AppIcons.File, MaterialTheme.colorScheme.onSurfaceVariant) {
+                r.notes.forEach { Hint("• $it") }
+            }
+        }
+        item {
+            Text("التفاصيل التقنية", style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(top = 6.dp))
+        }
+        itemsIndexed(r.sections) { i, sec ->
+            DetailCard(sec, expanded[i] == true) { expanded[i] = expanded[i] != true }
+        }
+        item {
+            Text(
+                "فحص ثابت: لا يشغّل التطبيق، ولا يوجد فحص يضمن الأمان 100%. مدة الفحص ${r.durationMs / 1000} ثانية.",
+                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth(),
+            )
+        }
     }
 }
 
-// ---------------- خطأ ----------------
+@Composable
+private fun VerdictHero(r: ScanResult) {
+    val cs = MaterialTheme.colorScheme
+    val color = levelColor(r.level)
+    val modColor = if (r.isModified) StatusColors.warn() else StatusColors.ok()
+    Surface(shape = MaterialTheme.shapes.extraLarge, color = cs.surfaceContainerLow, border = BorderStroke(1.dp, color.copy(alpha = 0.35f))) {
+        Box(Modifier.background(Brush.verticalGradient(listOf(color.copy(alpha = 0.20f), Color.Transparent)))) {
+            Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+                    Box(Modifier.size(56.dp).clip(RoundedCornerShape(18.dp)).background(color.copy(alpha = 0.18f)), contentAlignment = Alignment.Center) {
+                        Icon(
+                            if (r.level == RiskLevel.LOW) AppIcons.Verified else Icons.Filled.Warning, null,
+                            tint = color, modifier = Modifier.size(32.dp),
+                        )
+                    }
+                    Column(Modifier.weight(1f)) {
+                        Text(levelTitle(r.level), style = MaterialTheme.typography.headlineSmall, color = color)
+                        Text(r.fileName, style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        r.packageName?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = cs.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis) }
+                    }
+                }
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
+                    ScoreGauge(r.riskScore, "درجة الخطر", levelShort(r.level), color, Modifier.weight(1f))
+                    ScoreGauge(r.modScore, "درجة التعديل", if (r.isModified) "معدّل" else "أصلي", modColor, Modifier.weight(1f))
+                }
+                Text(r.level.explanation, style = MaterialTheme.typography.bodyMedium, color = cs.onSurfaceVariant)
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    if (r.integrityVerified) Pill("✔ التوقيع سليم", StatusColors.ok())
+                    if (r.signers.size > 1) Pill("شهادات مختلفة!", StatusColors.bad())
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun DetailCard(sec: Section, open: Boolean, onToggle: () -> Unit) {
+    val cs = MaterialTheme.colorScheme
+    val rotation by animateFloatAsState(if (open) 180f else 0f, label = "arrow")
+    Surface(shape = MaterialTheme.shapes.large, color = cs.surfaceContainerLow, border = BorderStroke(1.dp, cs.outlineVariant), modifier = Modifier.fillMaxWidth()) {
+        Column {
+            Row(
+                Modifier.fillMaxWidth().clickable(onClick = onToggle).padding(16.dp),
+                verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                IconBadge(AppIcons.File, cs.primary, 32.dp)
+                Text(sec.title, style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Icon(Icons.Filled.KeyboardArrowDown, null, modifier = Modifier.rotate(rotation))
+            }
+            AnimatedVisibility(open) {
+                SelectionContainer {
+                    Column(
+                        Modifier.fillMaxWidth().background(cs.surfaceContainerLowest.copy(alpha = 0.5f)).padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(4.dp),
+                    ) {
+                        sec.lines.forEach { l ->
+                            if (l.text.isEmpty()) Spacer(Modifier.height(6.dp))
+                            else Text(
+                                l.text,
+                                style = if (l.tone == Tone.HEAD) MaterialTheme.typography.titleSmall else MaterialTheme.typography.bodySmall,
+                                color = StatusColors.forTone(l.tone),
+                                fontFamily = if (l.text.contains("SHA-256") || l.text.startsWith("\"")) FontFamily.Monospace else null,
+                                modifier = Modifier.padding(start = (l.indent * 12).dp, top = if (l.tone == Tone.HEAD) 6.dp else 0.dp),
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+// =====================================================================
+// خطأ
+// =====================================================================
 @Composable
 private fun ErrorScreen(message: String, onBack: () -> Unit) {
     Column(
-        Modifier.fillMaxSize().padding(24.dp),
-        verticalArrangement = Arrangement.Center,
-        horizontalAlignment = Alignment.CenterHorizontally,
+        Modifier.fillMaxSize().padding(32.dp),
+        verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        Text("تعذّر فحص الملف", style = MaterialTheme.typography.titleLarge, color = StatusColors.bad())
-        Spacer(Modifier.height(12.dp))
-        Text(message, textAlign = TextAlign.Center)
+        IconBadge(AppIcons.Block, StatusColors.bad(), 80.dp)
+        Spacer(Modifier.height(20.dp))
+        Text("تعذّر فحص الملف", style = MaterialTheme.typography.headlineSmall)
+        Spacer(Modifier.height(8.dp))
+        Text(message, textAlign = TextAlign.Center, color = MaterialTheme.colorScheme.onSurfaceVariant)
         Spacer(Modifier.height(24.dp))
-        Button(onClick = onBack) { Text("رجوع") }
+        Button(onClick = onBack, shape = MaterialTheme.shapes.medium) { Text("رجوع") }
     }
 }
 
@@ -466,7 +629,7 @@ private fun share(ctx: Context, r: ScanResult) {
     val text = r.toText().let { if (it.length > 200_000) it.take(200_000) + "\n..." else it }
     val send = Intent(Intent.ACTION_SEND).apply {
         type = "text/plain"
-        putExtra(Intent.EXTRA_SUBJECT, "تقرير فحص ${r.fileName}")
+        putExtra(Intent.EXTRA_SUBJECT, "تقرير ApkSentry: ${r.fileName}")
         putExtra(Intent.EXTRA_TEXT, text)
     }
     ctx.startActivity(Intent.createChooser(send, "مشاركة التقرير"))
