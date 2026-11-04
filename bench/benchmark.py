@@ -47,28 +47,25 @@ def log(*a):
 
 
 def mb_post(key, data, raw=False, timeout=120):
+    """طلب لـ MalwareBazaar، مع إعادة المحاولة إذا كان الخطأ مؤقتاً (5xx، 429، انقطاع)."""
     req = urllib.request.Request(MB_API, data=urllib.parse.urlencode(data).encode(),
                                  headers={"Auth-Key": key, "User-Agent": UA})
-    try:
-        with urllib.request.urlopen(req, timeout=timeout) as r:
-            body = r.read()
-    except urllib.error.HTTPError as e:
-        detail = e.read()[:300].decode("utf-8", "replace")
-        hint = {401: "المفتاح غلط", 403: "المفتاح مرفوض أو تجاوزنا الحد اليومي (جرّب غداً، ولا تأكد من MB_API_KEY ف GitHub Secrets)",
-                429: "طلبات كثيرة، جرّب من بعد"}.get(e.code, "")
-        raise SystemExit(f"MalwareBazaar رفض الطلب (HTTP {e.code}): {hint}\n{detail}")
-    if raw:
-        return body
-    return json.loads(body)
-
-
-# عائلات أندرويد معروفة ف MalwareBazaar (اللي ما كايناش كترجع والو، ما فيها مشكل)
-FAMILIES = ["SpyNote", "Anatsa", "Hook", "Ermac", "Octo", "Coper", "Medusa", "SharkBot", "Xenomorph", "TeaBot",
-            "Cerberus", "Alien", "Hydra", "IRATA", "SpyMax", "CraxsRAT", "AhMyth", "Rafel", "BTMOB", "BtmobRAT",
-            "Godfather", "Anubis", "Vultur", "Chameleon", "Brokewell", "PixPirate", "Joker", "FluBot", "BrasDex",
-            "Copybara", "ToxicPanda", "Necro", "SpinOk", "TrickMo", "Rocinante", "Antidot", "Gigabud", "NGate",
-            "Crocodilus", "Herodotus", "SuperCard", "DroidBot", "Albiriox", "Sturnus", "RatOn", "Klopatra"]
-
+    last = None
+    for attempt in range(5):
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as r:
+                body = r.read()
+            return body if raw else json.loads(body)
+        except urllib.error.HTTPError as e:
+            detail = e.read()[:300].decode("utf-8", "replace")
+            if e.code in (401, 403):
+                raise SystemExit(f"MalwareBazaar رفض الطلب (HTTP {e.code}): المفتاح مرفوض أو تجاوزنا الحد اليومي "
+                                 f"(تأكد من MB_API_KEY ف GitHub Secrets)\n{detail}")
+            last = f"HTTP {e.code}"
+        except (urllib.error.URLError, TimeoutError, ConnectionError, json.JSONDecodeError) as e:
+            last = str(e)
+        time.sleep(5 * (attempt + 1))
+    raise RuntimeError(f"MalwareBazaar: فشل بعد 5 محاولات ({last})")
 
 def mb_list(key, n, per_family=25, offset=0, seed=2):
     """أحدث عينات APK + عينات من عائلات معروفة (باش نغطيو أنواع مختلفة)."""
