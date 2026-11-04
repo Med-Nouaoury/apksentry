@@ -58,6 +58,7 @@ The engine combines the following layers.
 | **Behavior rules** | 20+ rules covering common Android malware families: banking trojans, overlay attacks, SMS/OTP theft, keyloggers, clippers, ransomware, droppers, backdoors and malicious VPNs. Capabilities are distinguished from behaviors, so a permission alone is not treated as malicious. |
 | **Taint analysis** | Inter-procedural, flow-sensitive tracking of personal data (device IDs, location, contacts, SMS, clipboard, accounts, notifications, on-screen text) through registers, fields and calls to network or SMS sinks. |
 | **Bytecode analysis** | Full DEX instruction decoding with control-flow graphs, call graph, encrypted strings and string-decryption routines. |
+| **ARM64 emulator (native code)** | Native code cannot do anything harmful without going through one of two doors: JNI (Android APIs, requested by name) or libc/system calls. ApkSentry runs the app's own native libraries in a from-scratch ARM64 interpreter where both doors are fakes it controls: every request is recorded (sending SMS, reading files, resolving a server, running a command), nothing reaches the device, and code or strings decrypted in memory are captured. The two emulators are linked, so Java → native → Java chains run end to end. The interpreter is verified instruction by instruction against Unicorn (60,000 random instructions, zero differences). |
 | **Native libraries** | JNI exports and imports, direct system calls (`svc` on ARM/ARM64, `syscall` on x86_64), high-entropy packed sections, anti-analysis strings. |
 
 ### Identity and integrity
@@ -149,7 +150,8 @@ java -jar apksentry-cli.jar app.apk --tlsh-db malware_tlsh.csv
 ## Limitations
 
 - **No scanner guarantees safety.** A low score means no warning signs were found, not that the app is safe.
-- **Native code is not executed.** When the real code is decrypted inside a native library, ApkSentry cannot see it. It says so explicitly, and when almost all of the code is hidden this way, the app is not reported as low risk.
+- **Native emulation has limits.** Game engines (Unity, Unreal, Flutter…) and libraries over 12 MB are not executed, rare instructions stop the emulation rather than being guessed, and code that detects emulators can behave differently. When the real code stays hidden, ApkSentry says so explicitly, and when almost all of the code is hidden this way, the app is not reported as low risk.
+- **Code downloaded later from a server cannot be seen** by any scanner. The per-app firewall is the answer to that case.
 - **Taint analysis is approximate.** Some reflection, native and inheritance paths are not resolved.
 - **Behavior rules can match legitimate tools** that genuinely need sensitive permissions. Every finding is shown with its reason, so you can judge it yourself.
 - **v1 (JAR) signatures are read but not cryptographically verified.** Android verifies them at install time.
@@ -180,6 +182,7 @@ To sign releases with a stable key, add the repository secrets `KEYSTORE_BASE64`
 - [x] Runtime network monitoring
 - [x] Persistent per-app firewall
 - [x] Multi-layer unpacking
+- [x] Native (ARM64) emulation
 - [ ] Scan apps already installed on the phone
 - [ ] English user interface
 - [ ] Rules updatable without a new release

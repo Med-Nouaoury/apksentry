@@ -27,3 +27,15 @@ bytecode + zlib + `DexClassLoader` reached through reflection. `emu.dex`
 
 `pack5.apk` is `pack2` with a different hidden payload: a `VpnService` that routes
 all traffic (pattern seen in real droppers on MalwareBazaar).
+
+**Native (ARM64) fixtures** — built from `tools/native-fixtures/*.c` with
+`clang --target=aarch64-linux-android24 -fuse-ld=lld -shared -fPIC -O2 -nostdlib -nostdlibinc -Wl,--pack-dyn-relocs=android+relr -Wl,--use-android-relr-tags`
+against the JDK's `jni.h`:
+
+- `npack.apk`: `Application.onCreate` → `System.loadLibrary("pack")` → `JNI_OnLoad` decrypts `synthetic.dex` (rolling XOR) and hands it to `InMemoryDexClassLoader` through `NewDirectByteBuffer`.
+- `nspy.apk`: a `native` method that decrypts its strings, sends an SMS through `SmsManager` via JNI and resolves a C2 host.
+- `libreg.so`: `RegisterNatives` under an obfuscated name, RC4-like string decryption, 64-bit arithmetic printed with `snprintf`.
+- `libasset.so` + `core.bin`: reads an asset with `AAssetManager`, XOR + zlib `uncompress`, writes a dex with `fopen`/`fwrite`.
+- `libesc.so`: sandbox-escape attempts (`system`, raw `execve`/`openat` syscalls, file writes, infinite loop).
+
+`arm64_cases.txt.gz`: 400 random instructions with register/memory results recorded from Unicorn (`tools/armfuzz/gen.py`).

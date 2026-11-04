@@ -83,6 +83,36 @@ class EmuRuntime(
         if (apkBytes != null) vfs[apkPath] = apkBytes
     }
 
+    // ---------------- الربط مع محاكي ARM64 ----------------
+    private val apkBytesRef = apkBytes
+    private var nativeRt: NativeRuntime? = null
+    /** هل نسمح بتشغيل الكود native؟ (يتحكم فيه Unpacker) */
+    var nativeEnabled = false
+
+    fun native(): NativeBridge? {
+        if (!nativeEnabled) return null
+        val e = emu ?: return null
+        nativeRt?.let { return NativeBridge(it, this, e) }
+        val n = NativeRuntime(pkg, zip, apkBytesRef)
+        nativeRt = n
+        val b = NativeBridge(n, this, e)
+        n.bridge = b
+        return b
+    }
+
+    val nativeRuntime: NativeRuntime? get() = nativeRt
+
+    fun loadNative(name: String) {
+        val b = native() ?: return
+        val lib = if (name.endsWith(".so")) name.substringAfterLast('/') else "lib$name.so"
+        if (lib in NativeRuntime.ENGINE_LIBS) return
+        val bytes = b.rt.libBytes(lib) ?: return
+        b.rt.guarded(lib) {
+            val l = b.rt.load(lib, bytes)
+            if (l != null) b.rt.runJniOnLoad(l)
+        }
+    }
+
     fun checkTime() {
         if (System.currentTimeMillis() - t0 > maxMillis) throw EmuLimit("الوقت")
     }
@@ -543,7 +573,7 @@ class EmuRuntime(
         "getProperty" -> when (a[0]) { "java.vm.version" -> "2.1.0"; "os.arch" -> "aarch64"; "line.separator" -> "\n"; "file.separator" -> "/"; else -> a.getOrNull(1) }
         "lineSeparator" -> "\n"
         "getenv" -> null
-        "loadLibrary", "load" -> { events.add("يحمّل مكتبة native: ${a[0]}"); null }
+        "loadLibrary", "load" -> { events.add("يحمّل مكتبة native: ${a[0]}"); (a[0] as? String)?.let(::loadNative); null }
         "exit" -> throw EmuLimit("System.exit")
         "gc", "runFinalization" -> null
         else -> throw EmuUnsupported("System.$name")
@@ -690,5 +720,48 @@ class EmuRuntime(
             dotted.startsWith("[") -> dotted.replace('.', '/')
             else -> "L" + dotted.replace('.', '/') + ";"
         }
+    }
+}
+
+/** يربط محاكي ARM64 بمحاكي Dalvik: JNI ← → Java داخل نفس الصندوق. */
+class NativeBridge(val rt: NativeRuntime, private val jrt: EmuRuntime, private val emu: DalvikEmulator) : JavaBridge {
+    override fun call(cls: String, name: String, params: List<String>, ret: String, recv: Any?, args: List<Any?>, isStatic: Boolean): Any? {
+        jrt.checkTime()
+        return if (isStatic) emu.dispatch(cls, name, params, ret, args, virtual = false)
+        else emu.dispatch(cls, name, params, ret, listOf(recv) + args, virtual = true)
+    }
+
+    override fun getStatic(cls: String, name: String, type: String): Any? = emu.staticByName(cls, name, type)
+
+    override fun getField(obj: Any?, cls: String, name: String, type: String): Any? {
+        val o = emu.deref(obj)
+        return if (o is EObj) o.fields[name] ?: DalvikEmulator.defaultOf(type) else jrt.getField(o ?: return null, cls, name, type)
+    }
+
+    override fun setField(obj: Any?, cls: String, name: String, value: Any?) {
+        val o = emu.deref(obj)
+        if (o is EObj) o.fields[name] = value else if (o == null) emu.putStaticByName(cls, name, value)
+    }
+
+    override fun newObject(cls: String, params: List<String>, args: List<Any?>): Any? {
+        if (emu.isApp(cls)) {
+            val o = EObj(cls)
+            emu.dispatch(cls, "<init>", params, "V", listOf(o) + args, virtual = false)
+            return o
+        }
+        return jrt.call(cls, "<init>", params, "V", null, args, emu)
+    }
+
+    override fun isApp(cls: String) = emu.isApp(cls)
+
+    override fun inspect(bytes: ByteArray, source: String) = jrt.inspectBytes(bytes, source)
+
+    /** Java يستدعي وظيفة native. */
+    fun callFromJava(m: AppMethod, args: List<Any?>): Any? {
+        val sig = "(" + m.params.joinToString("") + ")" + m.ret
+        val fn = rt.findNative(m.cls, m.name, sig) ?: throw EmuUnsupported("native ${m.cls}->${m.name} (لم نجد الدالة)")
+        val recv = if (m.isStatic) null else args.getOrNull(0)
+        val a = if (m.isStatic) args else args.drop(1)
+        return rt.callJava(fn, m.isStatic, recv, m.cls, m.params, m.ret, a)
     }
 }

@@ -20,6 +20,17 @@ class Facts {
     private val superOf = HashMap<String, String>()
     private val appRefs = HashSet<String>()
 
+    /** ما طلبه الكود native من أندرويد (عبر JNI) والنصوص التي فكّها: نعاملها كأنها كود التطبيق. */
+    fun addNative(jniCalls: Collection<String>, strings: Collection<String>) {
+        for (c in jniCalls) { apis.add(c); appApis.add(c) }
+        for (v in strings) {
+            if (v.length > 2000) continue
+            val low = v.lowercase()
+            for (k in Behavior.KEYWORDS) if (low.contains(k)) keywordHits.add(k)
+            if (v.length in 25..100) for ((name, rx) in Behavior.REGEXES) if (rx.matches(v)) regexHits.add(name)
+        }
+    }
+
     /** يسجّل الوظائف والنصوص الموجودة في ملف dex. */
     fun addDex(dex: DexFile, checkCancel: () -> Unit) {
         for (c in 0 until dex.classCount) dex.superName(c)?.let { superOf[dex.className(c)] = it }

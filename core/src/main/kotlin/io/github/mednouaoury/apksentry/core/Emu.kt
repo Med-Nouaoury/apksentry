@@ -160,6 +160,22 @@ class DalvikEmulator(dexes: List<DexFile>, private val rt: EmuRuntime) {
         return rt.getStatic(cls, dex.fieldName(idx), dex.fieldType(idx))
     }
 
+    /** حقل ثابت بالاسم (لـ JNI). */
+    fun staticByName(cls: String, name: String, type: String): Any? {
+        if (!isApp(cls)) return rt.getStatic(cls, name, type)
+        ensureInit(cls)
+        var c: String? = cls
+        var guard = 0
+        while (c != null && guard++ < 64) {
+            val k = "$c->$name"
+            if (statics.containsKey(k)) return statics[k]
+            c = classes[c]?.superName
+        }
+        return defaultOf(type)
+    }
+
+    fun putStaticByName(cls: String, name: String, v: Any?) { if (isApp(cls)) { ensureInit(cls); statics["$cls->$name"] = v } }
+
     fun putStatic(dex: DexFile, idx: Int, v: Any?) {
         val cls = dex.fieldClass(idx)
         if (isApp(cls)) ensureInit(cls)
@@ -171,7 +187,11 @@ class DalvikEmulator(dexes: List<DexFile>, private val rt: EmuRuntime) {
     fun invoke(m: AppMethod, args: List<Any?>): Any? {
         if (m.codeOff == 0) {
             // native أو abstract
-            if (m.access and 0x100 != 0) throw EmuUnsupported("native ${m.cls}->${m.name}")
+            if (m.access and 0x100 != 0) {
+                // وظيفة native: ننفّذها في محاكي ARM64 (نفس الصندوق)
+                val nat = rt.native() ?: throw EmuUnsupported("native ${m.cls}->${m.name}")
+                return nat.callFromJava(m, args)
+            }
             throw EmuUnsupported("abstract ${m.cls}->${m.name}")
         }
         val code = codeCache.getOrPut(m.dex to m.codeOff) { readCode(m.dex, m.codeOff) } ?: throw EmuUnsupported("bad code")

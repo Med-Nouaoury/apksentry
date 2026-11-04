@@ -10,6 +10,19 @@ object Unpacker {
         val steps: Long,
         /** لماذا توقّفت المحاكاة (إن توقّفت قبل النهاية). */
         val stops: List<String>,
+        val native: NativeReport? = null,
+    )
+
+    /** ما رأيناه من تشغيل الكود native (ARM64). */
+    class NativeReport(
+        val libs: List<String>,
+        val calls: Int,
+        val jniCalls: Set<String>,
+        val events: Set<String>,
+        val strings: Set<String>,
+        val stops: List<String>,
+        val steps: Long,
+        val coverage: Int,
     )
 
     val LOADERS = setOf(
@@ -34,8 +47,10 @@ object Unpacker {
         factoryClass: String?,
         plain: Set<String> = emptySet(),
         checkCancel: () -> Unit = {},
+        runNative: Boolean = true,
     ): Result {
         val rt = EmuRuntime(pkg, apkBytes, zip)
+        rt.nativeEnabled = runNative
         for (d in dexes) rt.known.add(java.security.MessageDigest.getInstance("SHA-256").digest(d.bytes).toHex())
         rt.known.addAll(plain)
         val emu = DalvikEmulator(dexes, rt)
@@ -135,7 +150,43 @@ object Unpacker {
             }
         }
 
-        // 4) طبقات متعددة: الكود المفكوك قد يكون غلافاً آخر. الأندرويد كان سيشغّل كلاس التطبيق الحقيقي
+        // 4) الكود native: نحمّل مكتبات التطبيق (غير المحركات المعروفة) ونشغّل كل وظيفة native يعلنها كوده
+        var nativeCalls = 0
+        val natLibs = ArrayList<String>()
+        rt.native()?.let { nat ->
+            val cands = zip.entries.filter { e ->
+                e.name.startsWith("lib/arm64-v8a/") && e.name.endsWith(".so") && e.size in 1..(12L * 1024 * 1024) &&
+                    e.name.substringAfterLast('/') !in NativeRuntime.ENGINE_LIBS
+            }.sortedBy { it.size }.take(6)
+            for (e in cands) {
+                checkCancel()
+                val n = e.name.substringAfterLast('/')
+                if (n !in nat.rt.libs) rt.loadNative(n)
+                if (n in nat.rt.libs) natLibs.add(n)
+            }
+            val natives = emu.classes.values.asSequence().flatMap { it.methods.values.asSequence() }
+                .filter { it.access and 0x100 != 0 && Rules.KNOWN_PREFIXES.none { p -> it.cls.startsWith(p) } }
+                .take(40).toList()
+            for (m in natives) {
+                checkCancel()
+                if (nat.rt.findNative(m.cls, m.name, "(" + m.params.joinToString("") + ")" + m.ret) == null) continue
+                nativeCalls++
+                val args = ArrayList<Any?>()
+                if (!m.isStatic) args.add(EObj(m.cls))
+                for (p in m.params) args.add(when {
+                    p in EmuRuntime.CONTEXT_TYPES || p == "Landroid/app/Application;" -> ContextStub()
+                    p == "Landroid/content/res/AssetManager;" -> AssetsStub()
+                    p == "Ljava/lang/String;" -> ""
+                    else -> DalvikEmulator.defaultOf(p)
+                })
+                nat.rt.guarded("native ${m.cls.substringAfterLast('/').trimEnd(';')}.${m.name}") {
+                    try { nat.callFromJava(m, args) } catch (e: EmuThrow) { }
+                }
+            }
+            nat.rt.guarded("بحث في الذاكرة") { nat.rt.scanMemoryForDex() }
+        }
+
+        // 5) طبقات متعددة: الكود المفكوك قد يكون غلافاً آخر. الأندرويد كان سيشغّل كلاس التطبيق الحقيقي
         //    الموجود فيه، فنشغّله نحن أيضاً، ونكرر حتى 3 طبقات.
         var stage = 0
         var done = 0
@@ -170,6 +221,11 @@ object Unpacker {
                 }
             }
         }
-        return Result(rt.captured.toList(), rt.events, emu.steps, stops)
+        val nr = rt.nativeRuntime
+        val native = if (nr == null || nr.libs.isEmpty()) null else {
+            nr.cpu.trackCoverage = false
+            NativeReport(natLibs.ifEmpty { nr.libs.keys.toList() }, nativeCalls, nr.jniCalls.toSet(), nr.events.toSet(), nr.strings.toSet(), nr.stops.toList(), nr.cpu.steps, 0)
+        }
+        return Result(rt.captured.toList(), rt.events, emu.steps, stops, native)
     }
 }

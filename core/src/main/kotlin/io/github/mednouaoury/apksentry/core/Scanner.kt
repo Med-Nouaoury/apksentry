@@ -42,7 +42,7 @@ class Scanner(
     private val isCancelled: () -> Boolean = { false },
 ) {
     companion object {
-        const val VERSION = "3.7.3"
+        const val VERSION = "3.8.0"
         private val DEX_RE = Regex("classes\\d*\\.dex")
         private val B64_RE = Regex("[A-Za-z0-9+/=]{80,}")
         private val PATH_RE = Regex("\\.so$|^lib\\w+$|/data/|/sdcard|/storage/|/system/|\\.dex$|\\.apk$|\\.jar$")
@@ -134,6 +134,8 @@ class Scanner(
     private var hidingTool = false
     private var addedNativeLib = false
     private var packedDex = false
+    private var nativeRan = false
+    private val nativeHidden = LinkedHashSet<String>()
     private var hiddenPayload = false
     private var progressBase = 0f
     private var progressSpan = 1f
@@ -553,7 +555,7 @@ class Scanner(
     private fun unpack(src: ByteSource, zip: ZipArchive, manifest: XmlElement, dexes: MutableList<DexFile>, deep: Deep?, dexBytes: Long, name: String) {
         // التطبيقات الصغيرة (حيث تعيش أغلب الـ droppers) نحاكي بدايتها دائماً، لأن الأغلفة تخفي
         // DexClassLoader خلف reflection ونصوص مقسّمة. الكبيرة: فقط إذا كان كودها يحمّل كوداً مباشرة.
-        val loadsCode = Unpacker.LOADERS.any { it in facts.appApis } || dexBytes < 4 * MB
+        val loadsCode = Unpacker.LOADERS.any { it in facts.appApis } || dexBytes < 4 * MB || hidingTool || addedNativeLib
         if (!loadsCode) return
         report("فك الكود المخفي...", 0.22f)
         val app = manifest.walk().firstOrNull { it.tag == "application" }
@@ -570,6 +572,7 @@ class Scanner(
         val r = Unpacker.run(zip, apkBytes, dexes.toList(), pkg, app?.attr("name"), app?.attr("appComponentFactory"), plain, ::checkCancel)
         out("")
         out("فك الكود المخفي (محاكاة آمنة، ${r.steps} خطوة):", Tone.HEAD)
+        r.native?.let { reportNative(it) }
         if (r.payloads.isEmpty()) {
             out("لم نجد كوداً مخفياً يُفك عند التشغيل" + (r.stops.firstOrNull()?.let { " (توقّفت المحاكاة: $it)" } ?: ""), Tone.MUTED, 1)
             r.events.take(3).forEach { out("- $it", Tone.MUTED, 1) }
@@ -619,6 +622,35 @@ class Scanner(
         Triple("Landroid/app/admin/DeviceAdminReceiver;", 30, "الكود المخفي يطلب صلاحية مدير الجهاز (يصعب حذفه)"),
     )
 
+    /** ما فعله الكود native وهو يعمل داخل محاكي ARM64. */
+    private fun reportNative(n: Unpacker.NativeReport) {
+        nativeRan = true
+        out("شغّلنا الكود native (ARM64) في صندوق مغلق: ${n.libs.joinToString("، ")}" +
+            (if (n.calls > 0) "، ${n.calls} وظيفة native" else "") + " (${n.steps} تعليمة)", Tone.INFO, 1)
+        // ما طلبه من أندرويد: يدخل في قواعد السلوك كأنه كود Java
+        facts.addNative(n.jniCalls, n.strings)
+        val sensitive = n.jniCalls.mapNotNull { c -> Rules.SENSITIVE_APIS.firstOrNull { a -> c.startsWith(a.cls) && c.substringAfter("->") in a.methods }?.let { it to c } }
+        for ((a, c) in sensitive.distinctBy { it.first.desc }.take(8))
+            out("✘ من داخل الكود native: ${a.desc} (${c.substringAfterLast('/').replace(";->", ".")})", Tone.BAD, 2)
+        if (sensitive.isNotEmpty()) {
+            // التطبيقات العادية تستدعي هذه الوظائف من Java؛ إخفاؤها داخل native لا معنى له إلا التهرّب من الفحص
+            nativeHidden.addAll(sensitive.map { it.first.desc }.distinct())
+            flag(minOf(45, 20 + sensitive.maxOf { it.first.weight }),
+                "يخفي داخل كود native استعمال: " + nativeHidden.take(3).joinToString("، "))
+        }
+        for (e in n.events.take(8)) out("- $e", Tone.WARN, 2)
+        if (n.events.any { it.startsWith("يرسل رسالة SMS إلى") })
+            flag(30, "يرسل رسائل SMS إلى رقم كان مخفياً داخل الكود (صفة احتيال الرسائل المدفوعة)")
+        if (n.events.any { it.startsWith("يطلب عنوان موقع") || it.startsWith("يحاول اتصال شبكة مباشر") })
+            flag(10, "يتصل بموقع كان عنوانه مخفياً داخل كود native")
+        // النصوص التي فكّها: مواقع وعناوين
+        val urls = n.strings.filter { it.contains("://") || Regex("^[a-z0-9-]+(\\.[a-z0-9-]+)+$").matches(it) }.take(8)
+        for (u in urls) out("- نص مخفي فكّه: $u", Tone.WARN, 2)
+        val joined = n.strings.joinToString("\n").toByteArray()
+        if (joined.isNotEmpty()) bytes.scan(joined, joined.size, "native/نصوص مفكوكة")
+        n.stops.take(2).forEach { out("توقّفت المحاكاة native: $it", Tone.MUTED, 2) }
+    }
+
     /** خلاصة بكلام بسيط لمن لا يعرف شيئاً عن الأمن: ماذا يعني هذا لك؟ */
     private fun plainSummary(dangers: List<Finding>, mods: List<Finding>, repack: Boolean, rep: Reputation.Match?, risk: Int): List<Line> {
         val s = ArrayList<Line>()
@@ -632,10 +664,12 @@ class Scanner(
         }
         if (all.any { EVASION.containsMatchIn(it) })
             s.add(Line("يستعمل حيلاً ليختبئ من أدوات الفحص، والتطبيقات العادية لا تفعل هذا.", Tone.BAD))
+        if (nativeHidden.isNotEmpty())
+            s.add(Line("يخفي داخل كود native (حيث لا تراه أدوات الفحص العادية): " + nativeHidden.take(3).joinToString("، ") + ".", Tone.BAD))
         if (behaviors.isNotEmpty())
             s.add(Line("يتصرّف مثل الفيروسات: " + behaviors.first().message.substringBefore(" (").substringBefore(":") +
                 (if (behaviors.size > 1) "، و${count(behaviors.size - 1, "سلوك آخر", "سلوكين آخرين", "سلوكيات أخرى", "سلوكاً آخر")}" else "") + ".", Tone.BAD))
-        else if (all.none { it.contains("فيروس معروف") }) {
+        else if (all.none { it.contains("فيروس معروف") } && nativeHidden.isEmpty()) {
             // إذا كان جزء من الكود مخفياً ولم نفكّه، لا نعد بشيء عن الجزء الذي لم نره
             if (!hiddenPayload && (hidingTool || addedNativeLib || packedDex))
                 s.add(Line("في الكود الذي استطعنا قراءته، لم نجد سلوك فيروس. لكن جزءاً منه مخفي، ولا نعرف ما يفعله.", Tone.WARN))
