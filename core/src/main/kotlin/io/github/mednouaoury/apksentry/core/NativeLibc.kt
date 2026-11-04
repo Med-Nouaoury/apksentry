@@ -25,7 +25,7 @@ internal class Libc(private val rt: NativeRuntime) {
             "posix_memalign" -> { c -> m.write(c.x[0], 8, rt.malloc(c.x[2] + c.x[1]).let { (it + c.x[1] - 1) and (c.x[1] - 1).inv() }); ret(c, 0) }
             "memalign", "aligned_alloc" -> { c -> ret(c, rt.malloc(c.x[1] + c.x[0]).let { (it + c.x[0] - 1) and (c.x[0] - 1).inv() }) }
             "memcpy", "memmove", "__memcpy_chk", "__memmove_chk" -> { c ->
-                val n = c.x[2]; if (n > 256L * 1024 * 1024) throw EmuLimit("الذاكرة")
+                val n = c.x[2]; if (n < 0 || n > 32L * 1024 * 1024) throw EmuLimit("الذاكرة")
                 val b = m.bytes(c.x[1], n.toInt()); m.put(c.x[0], b); ret(c, c.x[0])
             }
             "memset", "__memset_chk" -> { c -> for (i in 0 until c.x[2]) m.w8(c.x[0] + i, c.x[1].toInt()); ret(c, c.x[0]) }
@@ -223,7 +223,7 @@ internal class Libc(private val rt: NativeRuntime) {
             "getcwd" -> { c -> m.put(c.x[0], "/\u0000".toByteArray()); ret(c, c.x[0]) }
             "mmap", "mmap64" -> { c ->
                 val len = c.x[1]; val flags = c.x[3]; val fd = c.x[4].toInt()
-                if (len <= 0 || len > 256L * 1024 * 1024) ret(c, -1) else {
+                if (len <= 0 || len > 64L * 1024 * 1024) ret(c, -1) else {
                     val p = rtMmap(rt, len)
                     if (flags and 0x20 == 0L) rt.files[fd]?.let { f -> val n = minOf(len, f.data.size - c.x[5]).toInt(); if (n > 0) m.put(p, f.data, c.x[5].toInt(), n) }
                     ret(c, p)
@@ -273,7 +273,7 @@ internal class Libc(private val rt: NativeRuntime) {
                 val src = m.bytes(c.x[2], c.x[3].toInt()); val cap = m.read(c.x[1], 8)
                 try {
                     val inf = java.util.zip.Inflater(); inf.setInput(src)
-                    val out = ByteArray(minOf(cap, 128L * 1024 * 1024).toInt()); val n = inf.inflate(out); inf.end()
+                    val out = ByteArray(minOf(cap, 32L * 1024 * 1024).toInt()); val n = inf.inflate(out); inf.end()
                     m.put(c.x[0], out, 0, n); m.write(c.x[1], 8, n.toLong()); ret(c, 0)
                 } catch (e: java.util.zip.DataFormatException) { ret(c, -3) }
             }

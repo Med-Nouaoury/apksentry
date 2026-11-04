@@ -54,7 +54,9 @@ class NativeRuntime(
     companion object {
         const val LIB_BASE = 0x7000_0000L
         const val HEAP = 0x2_0000_0000L
-        const val HEAP_MAX = 96L * 1024 * 1024
+        const val HEAP_MAX = 48L * 1024 * 1024
+        /** أكبر مكتبة نشغّلها (المكتبات الكبيرة محركات ألعاب، وتستهلك ذاكرة الهاتف). */
+        const val MAX_LIB = 8L * 1024 * 1024
         const val MMAP = 0x3_0000_0000L
         const val STACK_TOP = 0x7f_ff00_0000L
         const val STACK_SIZE = 2L * 1024 * 1024
@@ -68,7 +70,7 @@ class NativeRuntime(
             "libcocos2dcpp.so", "libfmod.so", "libvklayer_khronos_validation.so", "libtensorflowlite_jni.so", "libsqlcipher.so")
     }
 
-    val mem = ArmMemory(160L * 1024 * 1024)
+    val mem = ArmMemory(96L * 1024 * 1024)
     val cpu = Arm64(mem).also { it.maxSteps = maxSteps }
     private val t0 = System.currentTimeMillis()
 
@@ -374,15 +376,17 @@ class NativeRuntime(
     fun zipAsset(name: String): ByteArray? {
         val z = zip ?: return null
         val e = z.entry("assets/" + name.trimStart('/')) ?: return null
-        if (e.size > 128L * 1024 * 1024) return null
+        if (e.size > 32L * 1024 * 1024) { events.add("ملف موارد كبير لم نقرأه: assets/$name"); return null }
         return try { z.readBytes(e) } catch (ex: Exception) { null }
     }
 
+    /** كل طرق تحميل مكتبة (loadLibrary، dlopen، DT_NEEDED) تمر من هنا: نفس الحدود دائماً. */
     fun libBytes(name: String): ByteArray? {
+        if (name in ENGINE_LIBS) return null
         val z = zip ?: return null
         for (abi in listOf("arm64-v8a")) {
             val e = z.entry("lib/$abi/$name") ?: continue
-            if (e.size > 64L * 1024 * 1024) return null
+            if (e.size > MAX_LIB) { events.add("لم نشغّل $name: حجمها كبير (${e.size / (1024 * 1024)} ميجا)"); return null }
             return try { z.readBytes(e) } catch (ex: Exception) { null }
         }
         return null
@@ -485,7 +489,7 @@ class NativeRuntime(
     }
 
     fun sysWrite(fd: Int, buf: Long, n: Long): Long {
-        if (n < 0 || n > 64L * 1024 * 1024) return -22
+        if (n < 0 || n > 32L * 1024 * 1024) return -22
         val f = files[fd]
         val data = mem.bytes(buf, n.toInt())
         if (f == null) { if (fd == 1 || fd == 2) note(String(data)); return n }

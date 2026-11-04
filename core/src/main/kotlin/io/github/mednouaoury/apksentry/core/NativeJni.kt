@@ -231,7 +231,7 @@ internal object Jni {
             i == 172 -> { c -> val len = c.x[1].toInt().coerceIn(0, 1 shl 20); val init = o(c.x[3]); c.x[0] = h(arrayOfNulls<Any?>(len).also { a -> if (init != null) a.fill(init) }) }
             i == 173 -> { c -> c.x[0] = h((o(c.x[1]) as? Array<*>)?.getOrNull(c.x[2].toInt())) }
             i == 174 -> { c -> @Suppress("UNCHECKED_CAST") (o(c.x[1]) as? Array<Any?>)?.let { a -> val k = c.x[2].toInt(); if (k in a.indices) a[k] = o(c.x[3]) }; c.x[0] = 0 }
-            i in 175..182 -> { c -> val len = c.x[1].toInt().coerceIn(0, 64 shl 20); c.x[0] = h(newPrim(PRIMS[i - 175], len)) }
+            i in 175..182 -> { c -> val len = c.x[1].toInt().coerceIn(0, 8 shl 20); c.x[0] = h(newPrim(PRIMS[i - 175], len)) }
             i in 183..190 || i == 222 -> { c -> // Get<Prim>ArrayElements / GetPrimitiveArrayCritical
                 val a = o(c.x[1]); val len = arrLen(a)
                 val p = rt.malloc(maxOf(1L, len.toLong() * esize(a)))
@@ -263,7 +263,7 @@ internal object Jni {
             i == 221 -> { c -> val str = o(c.x[1]) as? String ?: ""; val b = str.substring(c.x[2].toInt().coerceIn(0, str.length), (c.x[2] + c.x[3]).toInt().coerceIn(0, str.length)).toByteArray(); m.put(c.x[4], b); m.w8(c.x[4] + b.size, 0); c.x[0] = 0 }
             i == 228 -> { c -> c.x[0] = 0 }
             i == 229 -> { c -> // NewDirectByteBuffer: الأغلفة تمرر بها الكود المفكوك إلى InMemoryDexClassLoader
-                val cap = c.x[2].coerceIn(0, 128L * 1024 * 1024)
+                val cap = c.x[2].coerceIn(0, 32L * 1024 * 1024)
                 val bytes = m.bytes(c.x[1], cap.toInt())
                 rt.inspect(bytes, "native → ByteBuffer")
                 val bb = java.nio.ByteBuffer.wrap(bytes)

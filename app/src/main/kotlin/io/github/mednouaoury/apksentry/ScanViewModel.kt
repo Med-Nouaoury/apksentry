@@ -184,15 +184,19 @@ class ScanViewModel(app: Application) : AndroidViewModel(app) {
                         _state.value = UiState.Scanning(name, msg, fraction ?: 0f)
                     }
                 }, { cancelled })
-                val result = opened.first.use { scanner.scan(it, name) }
+                CrashLog.scanStarted(ctx, name)
+                val result = opened.first.use { src -> onBigStack { scanner.scan(src, name) } }
                 _state.value = UiState.Done(result)
             } catch (e: ScanCancelledException) {
                 _state.value = UiState.Idle
             } catch (e: OutOfMemoryError) {
                 _state.value = UiState.Failed("ذاكرة الهاتف لا تكفي لفحص هذا الملف. جرّب نسخة الحاسوب.")
-            } catch (e: Exception) {
+            } catch (e: StackOverflowError) {
+                _state.value = UiState.Failed("بنية هذا الملف معقّدة جداً (أو مُعدّة لإسقاط أدوات الفحص).")
+            } catch (e: Throwable) {
                 _state.value = UiState.Failed(e.message ?: e.javaClass.simpleName)
             } finally {
+                CrashLog.scanEnded(ctx)
                 copy?.delete()
             }
         }
@@ -248,4 +252,16 @@ class ScanViewModel(app: Application) : AndroidViewModel(app) {
     } catch (e: Exception) {
         null
     }
+}
+
+/**
+ * المحاكيات تستدعي نفسها بعمق (Java ↔ native)، ومكدّس الخيوط العادية في أندرويد صغير.
+ * نشغّل الفحص في خيط بمكدّس كبير، وننقل أي خطأ كما هو إلى المستدعي.
+ */
+private fun <T> onBigStack(block: () -> T): T {
+    var result: Result<T>? = null
+    val t = Thread(null, { result = runCatching(block) }, "apksentry-scan", 64L * 1024 * 1024)
+    t.start()
+    t.join()
+    return result!!.getOrThrow()
 }

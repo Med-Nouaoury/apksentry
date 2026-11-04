@@ -155,9 +155,9 @@ object Unpacker {
         val natLibs = ArrayList<String>()
         rt.native()?.let { nat ->
             val cands = zip.entries.filter { e ->
-                e.name.startsWith("lib/arm64-v8a/") && e.name.endsWith(".so") && e.size in 1..(12L * 1024 * 1024) &&
+                e.name.startsWith("lib/arm64-v8a/") && e.name.endsWith(".so") && e.size in 1..(8L * 1024 * 1024) &&
                     e.name.substringAfterLast('/') !in NativeRuntime.ENGINE_LIBS
-            }.sortedBy { it.size }.take(6)
+            }.sortedBy { it.size }.take(4)
             for (e in cands) {
                 checkCancel()
                 val n = e.name.substringAfterLast('/')

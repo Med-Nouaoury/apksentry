@@ -93,6 +93,14 @@ class EmuRuntime(
         if (!nativeEnabled) return null
         val e = emu ?: return null
         nativeRt?.let { return NativeBridge(it, this, e) }
+        // على الهاتف: لا نشغّل المحاكي native إلا إذا بقيت ذاكرة كافية (وإلا يقتل النظام التطبيق)
+        val r = Runtime.getRuntime()
+        val free = r.maxMemory() - (r.totalMemory() - r.freeMemory())
+        if (free < 160L * 1024 * 1024) {
+            events.add("لم نشغّل الكود native: الذاكرة المتاحة لا تكفي (${free / (1024 * 1024)} ميجا)")
+            nativeEnabled = false
+            return null
+        }
         val n = NativeRuntime(pkg, zip, apkBytesRef)
         nativeRt = n
         val b = NativeBridge(n, this, e)
