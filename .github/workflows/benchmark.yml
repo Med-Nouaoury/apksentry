@@ -1,0 +1,68 @@
+name: Benchmark
+
+# قياس دقة الفحص على فيروسات حقيقية وتطبيقات نظيفة، ف سيرفر GitHub اللي كيتمسح من بعد.
+# ما كيتشغّل حتى تطبيق (فحص ثابت)، والفيروسات ما كيتحفظوش: غير التقرير.
+# خاصو secret سميتو MB_API_KEY (مفتاح MalwareBazaar).
+
+on:
+  workflow_dispatch:
+    inputs:
+      malware:
+        description: "عدد الفيروسات من MalwareBazaar (حتى 1000)"
+        default: "300"
+      fdroid:
+        description: "عدد التطبيقات النظيفة من F-Droid"
+        default: "200"
+
+permissions:
+  contents: read
+
+jobs:
+  bench:
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Build CLI
+        run: |
+          chmod +x gradlew
+          ./gradlew :core:cliJar
+
+      - name: Run benchmark
+        env:
+          MB_API_KEY: ${{ secrets.MB_API_KEY }}
+        run: |
+          if [ -z "$MB_API_KEY" ]; then
+            echo "::error::زيد secret سميتو MB_API_KEY ف Settings > Secrets and variables > Actions"
+            exit 1
+          fi
+          pip install pyzipper
+          python3 bench/benchmark.py --cli core/build/libs/apksentry-cli.jar \
+            --malware "${{ inputs.malware }}" --fdroid "${{ inputs.fdroid }}" --out bench_out
+          rm -rf bench_out/malware_samples bench_out/clean_fdroid
+
+      - name: Report
+        if: always()
+        run: |
+          if [ -f bench_out/report.md ]; then
+            cat bench_out/report.md >> "$GITHUB_STEP_SUMMARY"
+            echo "===== REPORT ====="
+            cat bench_out/report.md
+          fi
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: benchmark-report
+          path: |
+            bench_out/report.md
+            bench_out/results.csv
+          if-no-files-found: ignore
