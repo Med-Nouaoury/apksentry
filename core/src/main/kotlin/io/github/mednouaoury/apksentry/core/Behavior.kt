@@ -9,6 +9,8 @@ class Facts {
     val appApis = HashSet<String>()
     /** كلاس يقرأ الحافظة ويكتب فيها ويحتوي عنوان محفظة رقمية = clipper. */
     var clipperClass: String? = null
+    /** فيه ملف APK/DEX مخبّي ف الموارد. */
+    var embeddedApk = false
     val keywordHits = HashSet<String>()
     val regexHits = HashSet<String>()
     val flows = ArrayList<Flow>()
@@ -117,10 +119,10 @@ object Behavior {
                 api("Landroid/view/accessibility/AccessibilityNodeInfo;->performAction"), network)),
         BehaviorRule("يسرق الرسائل الواردة ويرسلها", 45,
             listOf(flow(setOf(Src.SMS_IN), NET))),
-        BehaviorRule("يقرأ رسائلك أو سجل مكالماتك ويرسلها", 40,
-            listOf(flow(setOf(Src.CONTACTS_SMS), NET), perm("READ_SMS", "READ_CALL_LOG"))),
-        BehaviorRule("يرسل جهات الاتصال (عادي ف تطبيقات المراسلة، مشبوه ف غيرها)", 10,
-            listOf(flow(setOf(Src.CONTACTS_SMS), NET), not(perm("READ_SMS", "READ_CALL_LOG")))),
+        BehaviorRule("يقرأ رسائلك SMS المحفوظة ويرسلها", 45,
+            listOf(flow(setOf(Src.SMS_DB), NET))),
+        BehaviorRule("يرسل جهات الاتصال أو سجل المكالمات (عادي ف تطبيقات المراسلة، مشبوه ف غيرها)", 10,
+            listOf(flow(setOf(Src.CONTACTS_SMS), NET))),
         BehaviorRule("يخفي الرسائل الواردة عنك (مثل رموز التحقق OTP)", 35,
             listOf(mf("android.provider.Telephony.SMS_RECEIVED"), api("Landroid/content/BroadcastReceiver;->abortBroadcast"))),
         BehaviorRule("يرسل رسائل SMS حسب شركة الاتصالات (صفة احتيال الرسائل المدفوعة)", 30,
@@ -157,6 +159,8 @@ object Behavior {
         BehaviorRule("ينزّل ويثبّت تطبيقات أخرى (dropper)", 20,
             listOf(perm("REQUEST_INSTALL_PACKAGES"), any(api("Landroid/content/pm/PackageInstaller;->createSession"),
                 kw("application/vnd.android.package-archive")), network)),
+        BehaviorRule("فيه تطبيق مخبّي داخلو وكيقدر يثبّتو (dropper)", 30,
+            listOf(perm("REQUEST_INSTALL_PACKAGES"), { f -> f.embeddedApk })),
         BehaviorRule("ينفّذ أوامر shell ويتصل بالشبكة مباشرة (طبيعي في تطبيقات الطرفية، وخطير في غيرها)", 25,
             listOf(exec, api("Ljava/net/Socket;-><init>", "Ljava/net/ServerSocket;-><init>"), kw("/system/bin/sh"))),
         BehaviorRule("يخفي أيقونته ويشتغل تلقائياً (صفة برامج التجسس)", 20,

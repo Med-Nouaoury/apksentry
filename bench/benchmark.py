@@ -63,7 +63,7 @@ FAMILIES = ["SpyNote", "Anatsa", "Hook", "Ermac", "Octo", "Coper", "Medusa", "Sh
             "Crocodilus", "Herodotus", "SuperCard", "DroidBot", "Albiriox", "Sturnus", "RatOn", "Klopatra"]
 
 
-def mb_list(key, n, per_family=25):
+def mb_list(key, n, per_family=25, offset=0, seed=2):
     """أحدث عينات APK + عينات من عائلات معروفة (باش نغطيو أنواع مختلفة)."""
     seen, out = set(), []
 
@@ -84,15 +84,15 @@ def mb_list(key, n, per_family=25):
         if len(out) >= n * 2:
             break
         try:
-            j = mb_post(key, {"query": "get_siginfo", "signature": fam, "limit": str(per_family * 3)})
+            j = mb_post(key, {"query": "get_siginfo", "signature": fam, "limit": str((per_family + offset) * 3)})
             before = len(out)
-            add([x for x in (j.get("data") or []) if x.get("file_type") == "apk"][:per_family])
+            add([x for x in (j.get("data") or []) if x.get("file_type") == "apk"][offset:offset + per_family])
             if len(out) > before:
                 log(f"  {fam}: +{len(out) - before}")
         except Exception as e:
             log(f"  {fam}: {e}")
     # توازن: ما نخليوش عائلة وحدة تسيطر على النتيجة
-    random.Random(2).shuffle(out)
+    random.Random(seed).shuffle(out)
     return out[:n]
 
 
@@ -119,7 +119,7 @@ def unzip_infected(blob, dest):
         f.write(data)
 
 
-def get_malware(key, n, folder, sha_list=None):
+def get_malware(key, n, folder, sha_list=None, offset=0, seed=2):
     os.makedirs(folder, exist_ok=True)
     if sha_list:
         items = []
@@ -127,7 +127,7 @@ def get_malware(key, n, folder, sha_list=None):
             info = mb_info(key, sha)
             items.append({"sha256_hash": sha, "signature": info.get("signature"), "tags": info.get("tags")})
     else:
-        items = mb_list(key, n)
+        items = mb_list(key, n, offset=offset, seed=seed)
     out = []
     for i, it in enumerate(items):
         sha = it["sha256_hash"]
@@ -150,7 +150,7 @@ def get_malware(key, n, folder, sha_list=None):
     return out
 
 
-def get_fdroid(n, folder, max_mb=60, seed=1):
+def get_fdroid(n, folder, max_mb=60, seed=1, skip=0):
     os.makedirs(folder, exist_ok=True)
     log("تحميل فهرس F-Droid...")
     req = urllib.request.Request(FDROID + "/index-v2.json", headers={"User-Agent": UA})
@@ -167,7 +167,7 @@ def get_fdroid(n, folder, max_mb=60, seed=1):
             cands.append((pkg, f["name"], f.get("sha256", "")))
     random.Random(seed).shuffle(cands)
     out = []
-    for pkg, name, sha in cands[:n]:
+    for pkg, name, sha in cands[skip:skip + n]:
         path = os.path.join(folder, pkg + ".apk")
         if not os.path.exists(path):
             try:
@@ -238,6 +238,8 @@ def main():
     ap.add_argument("--timeout", type=int, default=300)
     ap.add_argument("--keep", action="store_true", help="ما تمسحش الفيروسات من بعد الفحص")
     ap.add_argument("--java", default="java")
+    ap.add_argument("--offset", type=int, default=0, help="نتخطاو أول N عينة ف كل عائلة (باش نجرّبو على عينات جديدة)")
+    ap.add_argument("--seed", type=int, default=2)
     ap.add_argument("--sha-list", help="ملف فيه لائحة sha256 (باش نعاودو نفس العينات ونقارنو قبل/بعد)")
     a = ap.parse_args()
 
@@ -255,9 +257,9 @@ def main():
         if a.sha_list and os.path.exists(a.sha_list):
             shas = [l.strip().split()[0] for l in open(a.sha_list) if l.strip() and not l.startswith("#")]
             log(f"نفس العينات ديال {a.sha_list}: {len(shas)}")
-        items += get_malware(key, a.malware, mal_dir, shas)
+        items += get_malware(key, a.malware, mal_dir, shas, a.offset, a.seed)
     if a.fdroid > 0:
-        items += get_fdroid(a.fdroid, os.path.join(a.out, "clean_fdroid"))
+        items += get_fdroid(a.fdroid, os.path.join(a.out, "clean_fdroid"), skip=a.offset * 16)
     if a.clean_dir:
         items += get_dir(a.clean_dir)
     if not items:

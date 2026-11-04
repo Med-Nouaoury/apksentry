@@ -380,6 +380,11 @@ class Scanner(
         val perms = m.walk().filter { it.tag == "uses-permission" || it.tag == "uses-permission-sdk-23" }
             .mapNotNull { it.attr("name") }.toSortedSet()
         out("الصلاحيات (${perms.size}):", Tone.HEAD)
+        if (perms.size > 150) {
+            // أكبر التطبيقات العادية كتطلب عشرات الصلاحيات، ماشي مئات
+            out("✘ ${perms.size} صلاحية! حيلة باش يغرّق أدوات الفحص ويخبّي الصلاحيات الحقيقية", Tone.BAD, 1)
+            flag(40, "كيعلن على ${perms.size} صلاحية (حيلة كتغرّق أدوات الفحص)")
+        }
         var risky = 0
         for (p in perms) {
             val short = p.substringAfterLast('.')
@@ -435,12 +440,19 @@ class Scanner(
             val more = if (labels.size > 1) " (و${labels.size - 1} أسماء بلغات أخرى)" else ""
             out("اسم التطبيق: ${labels.first()}$more")
         }
+        val hidden = labels.firstOrNull { l -> l.any { Character.getType(it) == Character.FORMAT.toInt() } }
+        if (hidden != null) {
+            out("✘ سمية التطبيق فيها حروف مخفية (ما كتبانش): حيلة باش يفلت من كشف السميات", Tone.BAD)
+            flag(25, "سمية التطبيق فيها حروف مخفية باش يفلت من الكشف")
+        }
         if (pkg.isEmpty()) return
         Impersonation.APPS.firstOrNull { pkg in it.packages }?.let {
             out("هذه حزمة تطبيق ${it.name} الرسمية: التوقيع هو اللي كيبيّن واش النسخة من الشركة", Tone.INFO)
             return
         }
-        val hit = Impersonation.check(labels, pkg) ?: return
+        val raw = Impersonation.check(labels, pkg) ?: return
+        // اسم مشهور + حروف مخفية = ماشي صدفة
+        val hit = if (hidden != null && raw.strength == ImpStrength.WEAK) ImpersonationHit(raw.app, raw.label, ImpStrength.STRONG, raw.reason + " بحروف مخفية") else raw
         val official = hit.app.packages.first()
         val values = m.walk().flatMap { it.attrs.values.asSequence() }.toSet()
         val danger = Impersonation.DANGEROUS_WITH_IMPERSONATION.filter { (p, _) -> p in facts.perms || "android.permission.$p" in values }.values
@@ -575,14 +587,17 @@ class Scanner(
             checkCancel()
             val low = e.name.lowercase()
             if (low.endsWith(".apk") || low.endsWith(".jar") || low.endsWith(".dex")) {
+                facts.embeddedApk = true
                 flag(20, "$name: تطبيق أو كود مدمج داخل الموارد: ${e.name}")
                 continue
             }
             if (e.size < 4) continue
             val magic = try { zip.readHead(e, 4) } catch (ex: Exception) { continue }
             if (magic.size < 4) continue
-            if (magic[0] == 'd'.code.toByte() && magic[1] == 'e'.code.toByte() && magic[2] == 'x'.code.toByte() && magic[3] == '\n'.code.toByte())
+            if (magic[0] == 'd'.code.toByte() && magic[1] == 'e'.code.toByte() && magic[2] == 'x'.code.toByte() && magic[3] == '\n'.code.toByte()) {
+                facts.embeddedApk = true
                 flag(25, "$name: ملف كود مخفي باسم مموّه: ${e.name}")
+            }
             else if (magic[0] == 0x7f.toByte() && magic[1] == 'E'.code.toByte() && magic[2] == 'L'.code.toByte() && magic[3] == 'F'.code.toByte())
                 flag(10, "$name: ملف تنفيذي داخل الموارد: ${e.name}")
         }
@@ -666,6 +681,13 @@ class Scanner(
                 out("")
                 out("الكود صغير جداً (${sizeText(dexBytes)}) مع ملف مشفّر كبير: ${e.name}", Tone.WARN)
                 flag(15, "الكود الحقيقي غالباً مشفّر داخل ${e.name} ويُفك وقت التشغيل (packer)", Kind.MOD)
+                val loader = listOf("Ldalvik/system/DexClassLoader;-><init>", "Ldalvik/system/InMemoryDexClassLoader;-><init>",
+                    "Ldalvik/system/PathClassLoader;-><init>", "Ldalvik/system/DexFile;->loadDex").any { it in facts.apis }
+                if (loader && protectorsFound.isEmpty()) {
+                    // حماية تجارية معروفة كنعرفوها بالسمية؛ هادي حماية مجهولة كتفك كود مشفّر وتشغّلو ف الذاكرة
+                    out("✘ وكيفك هاد الملف ويشغّلو ككود، بأداة حماية مجهولة (ماشي شركة معروفة)", Tone.BAD, 1)
+                    flag(30, "كيخبّي الكود الحقيقي مشفّر ف ${e.name} وكيشغّلو ف الذاكرة (dropper/packer مجهول)")
+                }
                 return
             }
         }

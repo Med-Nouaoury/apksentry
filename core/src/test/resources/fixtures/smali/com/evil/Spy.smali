@@ -77,6 +77,30 @@
     return-void
 .end method
 
+# saved SMS via content://sms (string) -> network stream
+.method public static smsDump(Landroid/content/ContentResolver;Ljava/net/HttpURLConnection;)V
+    .registers 9
+    const-string v1, "content://sms/inbox"
+    invoke-static {v1}, Landroid/net/Uri;->parse(Ljava/lang/String;)Landroid/net/Uri;
+    move-result-object v1
+    const/4 v2, 0x0
+    move-object v3, v2
+    move-object v4, v2
+    move-object v5, v2
+    move-object v0, p0
+    invoke-virtual/range {v0 .. v5}, Landroid/content/ContentResolver;->query(Landroid/net/Uri;[Ljava/lang/String;Ljava/lang/String;[Ljava/lang/String;Ljava/lang/String;)Landroid/database/Cursor;
+    move-result-object v0
+    const/4 v1, 0x2
+    invoke-interface {v0, v1}, Landroid/database/Cursor;->getString(I)Ljava/lang/String;
+    move-result-object v1
+    invoke-virtual {p1}, Ljava/net/HttpURLConnection;->getOutputStream()Ljava/io/OutputStream;
+    move-result-object v2
+    new-instance v3, Ljava/io/PrintWriter;
+    invoke-direct {v3, v2}, Ljava/io/PrintWriter;-><init>(Ljava/io/OutputStream;)V
+    invoke-virtual {v3, v1}, Ljava/io/PrintWriter;->print(Ljava/lang/String;)V
+    return-void
+.end method
+
 # NEGATIVE: register reused before sink (must NOT be flagged)
 .method public static clean(Landroid/telephony/TelephonyManager;)V
     .registers 4

@@ -4,7 +4,7 @@ package io.github.mednouaoury.apksentry.core
 enum class Src(val label: String) {
     DEVICE_ID("معرّفات الهاتف أو رقمه"),
     LOCATION("موقعك"),
-    CONTACTS_SMS("جهات الاتصال أو الرسائل أو سجل المكالمات"),
+    CONTACTS_SMS("جهات الاتصال أو سجل المكالمات"),
     ACCOUNTS("حساباتك"),
     CLIPBOARD("الحافظة (ما تنسخه)"),
     APP_LIST("قائمة تطبيقاتك"),
@@ -13,6 +13,7 @@ enum class Src(val label: String) {
     NOTIFICATIONS("إشعاراتك"),
     SCREEN_TEXT("نصوص الشاشة (عبر إمكانية الوصول)"),
     COOKIES("كوكيز المتصفح"),
+    SMS_DB("رسائلك SMS المحفوظة"),
 }
 
 /** أماكن خروج البيانات. */
@@ -54,6 +55,8 @@ class TaintAnalyzer(
         private const val SRC_MASK = (1L shl 20) - 1
         private const val NETSTREAM = 1L shl 20
         private const val PRIVATE_URI = 1L shl 21
+        private const val SMS_URI = 1L shl 22
+        private val SMS_URI_RE = Regex("content://(sms|mms)", RegexOption.IGNORE_CASE)
         private const val LOCAL_MASK = (1L shl 32) - 1
         private const val PARAM_MASK = LOCAL_MASK.inv()
         private fun bit(s: Src) = 1L shl s.ordinal
@@ -314,7 +317,14 @@ class TaintAnalyzer(
         fun set(r: Int, v: Long) { if (r in 0 until R) st[r] = v }
         when (x.op) {
             Op.CONST, Op.NEW_INSTANCE, Op.NEW_ARRAY, Op.INSTANCE_OF, Op.ARRAY_LENGTH, Op.CONST_CLASS, Op.MOVE_EXCEPTION -> set(x.dst, 0)
-            Op.CONST_STRING -> set(x.dst, if (Rules.PRIVATE_URIS.containsMatchIn(dex.string(x.idx))) PRIVATE_URI else 0)
+            Op.CONST_STRING -> {
+                val s = dex.string(x.idx)
+                set(x.dst, when {
+                    SMS_URI_RE.containsMatchIn(s) -> SMS_URI
+                    Rules.PRIVATE_URIS.containsMatchIn(s) -> PRIVATE_URI
+                    else -> 0
+                })
+            }
             Op.MOVE, Op.CHECK_CAST, Op.UNOP -> set(x.dst, g(x.srcs[0]))
             Op.BINOP -> set(x.dst, x.srcs.fold(0L) { a, r -> a or g(r) })
             Op.MOVE_RESULT -> set(x.dst, st[R])
@@ -325,7 +335,8 @@ class TaintAnalyzer(
             Op.IGET, Op.SGET -> {
                 val f = dex.fieldFull(x.idx)
                 var v = fields[f] ?: 0L
-                if (x.op == Op.SGET && PRIVATE_URI_CLASSES.any { f.startsWith(it) } && f.contains("URI")) v = v or PRIVATE_URI
+                if (x.op == Op.SGET && PRIVATE_URI_CLASSES.any { f.startsWith(it) } && f.contains("URI"))
+                    v = v or if (f.startsWith("Landroid/provider/Telephony")) SMS_URI else PRIVATE_URI
                 set(x.dst, v)
             }
             Op.IPUT, Op.SPUT -> {
@@ -380,7 +391,10 @@ class TaintAnalyzer(
         }
         SOURCES[name]?.let { result = result or bit(it) }
         if (name in NETSTREAM_PRODUCERS) result = result or NETSTREAM
-        if (name == "Landroid/content/ContentResolver;->query" && args.any { it and PRIVATE_URI != 0L }) result = result or bit(Src.CONTACTS_SMS)
+        if (name == "Landroid/content/ContentResolver;->query") {
+            if (args.any { it and PRIVATE_URI != 0L }) result = result or bit(Src.CONTACTS_SMS)
+            if (args.any { it and SMS_URI != 0L }) result = result or bit(Src.SMS_DB)
+        }
         st[R] = result
     }
 

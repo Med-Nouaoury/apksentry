@@ -28,7 +28,8 @@ class EndToEndTest {
         val text = result.toText()
         assertTrue("معرّفات الهاتف أو رقمه تصل إلى الإنترنت" in text, "IMEI -> network")
         assertTrue("الحافظة (ما تنسخه) تصل إلى رسائل SMS" in text, "clipboard -> SMS")
-        assertTrue("جهات الاتصال أو الرسائل أو سجل المكالمات تصل إلى الإنترنت" in text, "contacts -> network")
+        assertTrue("جهات الاتصال أو سجل المكالمات تصل إلى الإنترنت" in text, "contacts -> network")
+        assertTrue("رسائلك SMS المحفوظة تصل إلى الإنترنت" in text, "saved SMS -> network")
     }
 
     @Test
@@ -37,6 +38,7 @@ class EndToEndTest {
         assertTrue(titles.any { "حصان طروادة بنكي" in it }, "banking trojan")
         assertTrue(titles.any { "OTP" in it }, "OTP interception")
         assertTrue(titles.any { "يرسل جهات الاتصال" in it }, "contacts exfiltration")
+        assertTrue(titles.any { "يقرأ رسائلك SMS المحفوظة ويرسلها" in it }, "saved SMS theft")
         assertEquals(100, result.riskScore)
     }
 
