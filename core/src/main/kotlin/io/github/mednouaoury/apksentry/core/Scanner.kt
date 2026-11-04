@@ -53,6 +53,7 @@ class Scanner(
             "service" to "service", "receiver" to "receiver", "provider" to "provider",
         )
         private const val MB = 1024L * 1024
+        private val ZERO_WIDTH = setOf('\u200B', '\u2060', '\u2061', '\u2062', '\u2063', '\u2064', '\uFEFF', '\u180E', '\u00AD')
         /** نحسب البصمة التقريبية للملفات حتى هذا الحجم (الفيروسات صغيرة عادة). */
         private const val TLSH_MAX = 300 * MB
 
@@ -440,7 +441,8 @@ class Scanner(
             val more = if (labels.size > 1) " (و${labels.size - 1} أسماء بلغات أخرى)" else ""
             out("اسم التطبيق: ${labels.first()}$more")
         }
-        val hidden = labels.firstOrNull { l -> l.any { Character.getType(it) == Character.FORMAT.toInt() } }
+        // حروف بعرض صفر وسط الكلمة (ماشي علامات الاتجاه RLM/LRM اللي كتستعملها الترجمات العربية والعبرية عادي)
+        val hidden = labels.firstOrNull { l -> l.indices.any { i -> l[i] in ZERO_WIDTH && i > 0 && i < l.length - 1 && l[i - 1].isLetter() } }
         if (hidden != null) {
             out("✘ سمية التطبيق فيها حروف مخفية (ما كتبانش): حيلة باش يفلت من كشف السميات", Tone.BAD)
             flag(25, "سمية التطبيق فيها حروف مخفية باش يفلت من الكشف")
@@ -587,7 +589,8 @@ class Scanner(
             checkCancel()
             val low = e.name.lowercase()
             if (low.endsWith(".apk") || low.endsWith(".jar") || low.endsWith(".dex")) {
-                facts.embeddedApk = true
+                // .jar كيتستعمل عادي ف أدوات Shizuku/root (app_process)؛ التطبيق المخبّي هو .apk ولا .dex
+                if (!low.endsWith(".jar")) facts.embeddedApk = true
                 flag(20, "$name: تطبيق أو كود مدمج داخل الموارد: ${e.name}")
                 continue
             }

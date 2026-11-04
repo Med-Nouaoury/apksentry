@@ -151,4 +151,12 @@ class LayersTest {
         assertTrue(r.behaviors.isNotEmpty(), "وقرينا الكود")
         assertTrue(r.riskScore >= 60)
     }
+
+    @Test
+    fun hiddenCharactersOnlyCountInsideWords() {
+        val zw = Regex("[\u200B\u2060-\u2064\uFEFF]")
+        assertTrue(zw.containsMatchIn("TikT\u2062\u200Bok18+"))
+        // علامة الاتجاه ف ترجمة عربية عادية ماشي حيلة
+        assertTrue(!zw.containsMatchIn("\u200Fالملفات"))
+    }
 }
