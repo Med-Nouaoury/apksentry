@@ -167,7 +167,7 @@ object Behavior {
                 kw("your files", "files have been encrypted", "ransom", "pay the", "bitcoin"), kw("your files", "files have been encrypted", "ransom"))),
         BehaviorRule("يحمّل كوداً من الإنترنت ويشغّله", 35,
             listOf(dynLoad, network, kw(".dex", ".jar", ".apk"))),
-        BehaviorRule("ينزّل ويثبّت تطبيقات أخرى (dropper)", 20,
+        BehaviorRule("ينزّل ويثبّت تطبيقات (عادي في التطبيقات التي تحدّث نفسها خارج Play، ومشبوه في غيرها)", 20,
             listOf(perm("REQUEST_INSTALL_PACKAGES"), any(api("Landroid/content/pm/PackageInstaller;->createSession"),
                 kw("application/vnd.android.package-archive")), network)),
         BehaviorRule("يخفي تطبيقاً آخر بداخله ويستطيع تثبيته (dropper)", 30,
