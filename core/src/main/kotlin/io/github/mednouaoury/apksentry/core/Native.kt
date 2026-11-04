@@ -50,6 +50,7 @@ class NativeRuntime(
     private val apkBytes: ByteArray?,
     maxSteps: Long = 40_000_000,
     private val maxMillis: Long = 15_000,
+    memLimit: Long = 96L * 1024 * 1024,
 ) {
     companion object {
         const val LIB_BASE = 0x7000_0000L
@@ -70,7 +71,7 @@ class NativeRuntime(
             "libcocos2dcpp.so", "libfmod.so", "libvklayer_khronos_validation.so", "libtensorflowlite_jni.so", "libsqlcipher.so")
     }
 
-    val mem = ArmMemory(96L * 1024 * 1024)
+    val mem = ArmMemory(memLimit)
     val cpu = Arm64(mem).also { it.maxSteps = maxSteps }
     private val t0 = System.currentTimeMillis()
 

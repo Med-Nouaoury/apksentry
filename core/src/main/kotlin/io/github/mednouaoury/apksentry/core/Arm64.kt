@@ -25,6 +25,7 @@ class ArmMemory(private val maxBytes: Long = 256L * 1024 * 1024) {
             if (!pages.containsKey(p)) {
                 mapped += 4096
                 if (mapped > maxBytes) throw EmuLimit("الذاكرة")
+                if (mapped and 0x3fffff == 0L && MemGuard.free() < MemGuard.RESERVE) throw EmuLimit("ذاكرة الهاتف")
                 pages[p] = ByteArray(4096)
             }
             p++

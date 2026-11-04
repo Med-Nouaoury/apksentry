@@ -48,8 +48,11 @@ object Unpacker {
         plain: Set<String> = emptySet(),
         checkCancel: () -> Unit = {},
         runNative: Boolean = true,
+        memBudget: Long = 512L * 1024 * 1024,
     ): Result {
-        val rt = EmuRuntime(pkg, apkBytes, zip)
+        // الميزانية تتقاسمها المحاكاتان: Dalvik الثلث (حتى 192 ميجا)، و native الربع (حتى 96 ميجا)
+        val rt = EmuRuntime(pkg, apkBytes, zip, maxAlloc = minOf(192L * 1024 * 1024, memBudget / 3))
+        rt.nativeMemory = minOf(96L * 1024 * 1024, memBudget / 4)
         rt.nativeEnabled = runNative
         for (d in dexes) rt.known.add(java.security.MessageDigest.getInstance("SHA-256").digest(d.bytes).toHex())
         rt.known.addAll(plain)

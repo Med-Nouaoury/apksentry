@@ -42,7 +42,7 @@ class Scanner(
     private val isCancelled: () -> Boolean = { false },
 ) {
     companion object {
-        const val VERSION = "3.8.3"
+        const val VERSION = "3.8.4"
         private val DEX_RE = Regex("classes\\d*\\.dex")
         private val B64_RE = Regex("[A-Za-z0-9+/=]{80,}")
         private val PATH_RE = Regex("\\.so$|^lib\\w+$|/data/|/sdcard|/storage/|/system/|\\.dex$|\\.apk$|\\.jar$")
@@ -154,6 +154,7 @@ class Scanner(
 
     private fun checkCancel() {
         if (isCancelled()) throw ScanCancelledException()
+        MemGuard.check()
     }
 
     private fun out(text: String, tone: Tone = Tone.NORMAL, indent: Int = 0) {
@@ -176,6 +177,9 @@ class Scanner(
         } catch (e: OutOfMemoryError) {
             notes.add("$label: توقّف لأن الذاكرة لا تكفي")
             out("$label: توقّف لأن الذاكرة لا تكفي", Tone.WARN)
+        } catch (e: LowMemoryException) {
+            notes.add("$label: أوقفناه لأن ذاكرة الهاتف قاربت على النفاد (الملف كبير جداً)")
+            out("$label: أوقفناه لأن ذاكرة الهاتف قاربت على النفاد", Tone.WARN)
         } catch (e: Exception) {
             notes.add("$label: تعذّر إكماله (${e.javaClass.simpleName})")
             out("$label: تعذّر إكماله، الملف تالف أو مُعقّد عمداً", Tone.WARN)
@@ -560,7 +564,10 @@ class Scanner(
     private fun unpack(src: ByteSource, zip: ZipArchive, manifest: XmlElement, dexes: MutableList<DexFile>, deep: Deep?, dexBytes: Long, name: String) {
         // التطبيقات الصغيرة (حيث تعيش أغلب الـ droppers) نحاكي بدايتها دائماً، لأن الأغلفة تخفي
         // DexClassLoader خلف reflection ونصوص مقسّمة. الكبيرة: فقط إذا كان كودها يحمّل كوداً مباشرة.
-        val loadsCode = Unpacker.LOADERS.any { it in facts.appApis } || dexBytes < 4 * MB || hidingTool || addedNativeLib
+        // التطبيقات الضخمة (TikTok...) تستعمل DexClassLoader للإضافات، ومحاكاة بدايتها مكلفة جداً وقليلة الفائدة:
+        // الأغلفة الحقيقية كودها صغير. نحاكي الكبير فقط إذا ظهرت علامة إخفاء.
+        val loadsCode = dexBytes < 4 * MB || hidingTool || addedNativeLib ||
+            (Unpacker.LOADERS.any { it in facts.appApis } && dexBytes < 24 * MB)
         if (!loadsCode) return
         report("فك الكود المخفي...", 0.22f)
         val app = manifest.walk().firstOrNull { it.tag == "application" }
@@ -573,8 +580,16 @@ class Scanner(
             if (head.size == 4 && head[0] == 'd'.code.toByte() && head[1] == 'e'.code.toByte() && head[2] == 'x'.code.toByte())
                 try { plain.add(sha256(zip.readBytes(e))) } catch (ex: Exception) { }
         }
-        val apkBytes = if (src.size <= 64 * MB) try { src.openStream().use { it.readAllCompat(64 * MB) } } catch (e: Exception) { null } else null
-        val r = Unpacker.run(zip, apkBytes, dexes.toList(), pkg, app?.attr("name"), app?.attr("appComponentFactory"), plain, ::checkCancel)
+        // نقرّر حسب الذاكرة الحرة فعلاً (بعد التنظيف)، لا حسب حدّ ثابت
+        val free = MemGuard.freeAfterGc() - MemGuard.RESERVE
+        if (free < 96 * MB) {
+            out("")
+            out("لم نشغّل محاكاة فك الكود: ذاكرة الهاتف المتاحة لا تكفي لهذا الملف", Tone.MUTED)
+            return
+        }
+        val apkBytes = if (src.size <= 64 * MB && free > 256 * MB) try { src.openStream().use { it.readAllCompat(64 * MB) } } catch (e: Exception) { null } else null
+        val r = Unpacker.run(zip, apkBytes, dexes.toList(), pkg, app?.attr("name"), app?.attr("appComponentFactory"), plain, ::checkCancel,
+            memBudget = free)
         out("")
         out("فك الكود المخفي (محاكاة آمنة، ${r.steps} خطوة):", Tone.HEAD)
         r.native?.let { reportNative(it) }

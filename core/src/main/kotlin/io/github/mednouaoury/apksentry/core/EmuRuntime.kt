@@ -94,14 +94,13 @@ class EmuRuntime(
         val e = emu ?: return null
         nativeRt?.let { return NativeBridge(it, this, e) }
         // على الهاتف: لا نشغّل المحاكي native إلا إذا بقيت ذاكرة كافية (وإلا يقتل النظام التطبيق)
-        val r = Runtime.getRuntime()
-        val free = r.maxMemory() - (r.totalMemory() - r.freeMemory())
-        if (free < 160L * 1024 * 1024) {
+        val free = MemGuard.free() - MemGuard.RESERVE
+        if (free < nativeMemory + 32L * 1024 * 1024 || nativeMemory < 24L * 1024 * 1024) {
             events.add("لم نشغّل الكود native: الذاكرة المتاحة لا تكفي (${free / (1024 * 1024)} ميجا)")
             nativeEnabled = false
             return null
         }
-        val n = NativeRuntime(pkg, zip, apkBytesRef)
+        val n = NativeRuntime(pkg, zip, apkBytesRef, memLimit = nativeMemory)
         nativeRt = n
         val b = NativeBridge(n, this, e)
         n.bridge = b
@@ -125,10 +124,17 @@ class EmuRuntime(
         if (System.currentTimeMillis() - t0 > maxMillis) throw EmuLimit("الوقت")
     }
 
+    private var sinceCheck = 0L
+
     fun allocate(n: Long) {
         allocated += n
         if (allocated > maxAlloc) throw EmuLimit("الذاكرة")
+        sinceCheck += n
+        if (sinceCheck > 4L * 1024 * 1024) { sinceCheck = 0; if (MemGuard.free() < MemGuard.RESERVE) throw EmuLimit("ذاكرة الهاتف") }
     }
+
+    /** حد ذاكرة المحاكي native (يحدّده Unpacker حسب الذاكرة الحرة). */
+    var nativeMemory = 96L * 1024 * 1024
 
     private fun sha(b: ByteArray) = MessageDigest.getInstance("SHA-256").digest(b).toHex()
 
