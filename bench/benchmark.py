@@ -67,6 +67,14 @@ def mb_post(key, data, raw=False, timeout=120):
         time.sleep(5 * (attempt + 1))
     raise RuntimeError(f"MalwareBazaar: فشل بعد 5 محاولات ({last})")
 
+# عائلات أندرويد معروفة ف MalwareBazaar (اللي ما كايناش كترجع والو، ما فيها مشكل)
+FAMILIES = ["SpyNote", "Anatsa", "Hook", "Ermac", "Octo", "Coper", "Medusa", "SharkBot", "Xenomorph", "TeaBot",
+            "Cerberus", "Alien", "Hydra", "IRATA", "SpyMax", "CraxsRAT", "AhMyth", "Rafel", "BTMOB", "BtmobRAT",
+            "Godfather", "Anubis", "Vultur", "Chameleon", "Brokewell", "PixPirate", "Joker", "FluBot", "BrasDex",
+            "Copybara", "ToxicPanda", "Necro", "SpinOk", "TrickMo", "Rocinante", "Antidot", "Gigabud", "NGate",
+            "Crocodilus", "Herodotus", "SuperCard", "DroidBot", "Albiriox", "Sturnus", "RatOn", "Klopatra"]
+
+
 def mb_list(key, n, per_family=25, offset=0, seed=2):
     """أحدث عينات APK + عينات من عائلات معروفة (باش نغطيو أنواع مختلفة)."""
     seen, out = set(), []
