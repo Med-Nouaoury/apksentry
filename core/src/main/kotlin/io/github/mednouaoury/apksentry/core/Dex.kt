@@ -86,6 +86,45 @@ class DexFile(private val d: ByteArray) {
         }
     }
 
+    // ---------- للمحاكي ----------
+    internal fun fieldType(idx: Int): String =
+        if (idx < 0 || idx >= fieldCount) "" else type(d.u16(fieldIdsOff + idx * 8 + 2))
+
+    internal fun fieldName(idx: Int): String =
+        if (idx < 0 || idx >= fieldCount) "" else string(d.i32(fieldIdsOff + idx * 8 + 4))
+
+    internal fun fieldClass(idx: Int): String =
+        if (idx < 0 || idx >= fieldCount) "" else type(d.u16(fieldIdsOff + idx * 8))
+
+    /** أنواع معاملات الوظيفة ونوع ما ترجعه. */
+    internal fun methodParams(idx: Int): List<String> {
+        if (idx < 0 || idx >= methodCount) return emptyList()
+        val o = protoIdsOff + d.u16(methodIdsOff + idx * 8 + 2) * 12
+        val paramsOff = d.i32(o + 8)
+        if (paramsOff <= 0 || paramsOff + 4 > d.size) return emptyList()
+        val n = d.i32(paramsOff)
+        if (n < 0 || n > 255 || paramsOff + 4 + n * 2 > d.size) return emptyList()
+        return List(n) { type(d.u16(paramsOff + 4 + it * 2)) }
+    }
+
+    internal fun methodReturn(idx: Int): String =
+        if (idx < 0 || idx >= methodCount) "V" else type(d.i32(protoIdsOff + d.u16(methodIdsOff + idx * 8 + 2) * 12 + 4))
+
+    internal fun classDefOf(classDef: Int): Int = classDefsOff + classDef * 32
+
+    /** الحقول الثابتة للكلاس بالترتيب (لربطها بالقيم الابتدائية). */
+    internal fun staticFields(classDef: Int): List<Int> {
+        val dataOff = d.i32(classDefsOff + classDef * 32 + 24)
+        if (dataOff <= 0 || dataOff >= d.size) return emptyList()
+        val c = Cursor(dataOff)
+        val sf = c.uleb(); val inf = c.uleb(); val dm = c.uleb(); val vm = c.uleb()
+        if (!sane(sf, inf, dm, vm)) return emptyList()
+        var idx = 0
+        return List(sf) { idx += c.uleb(); c.uleb(); idx }
+    }
+
+    internal fun staticValuesOff(classDef: Int): Int = d.i32(classDefsOff + classDef * 32 + 28)
+
     fun string(idx: Int): String {
         if (idx < 0 || idx >= stringCount) return ""
         stringCache[idx]?.let { return it }

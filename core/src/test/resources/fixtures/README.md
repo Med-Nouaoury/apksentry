@@ -15,3 +15,9 @@ Rebuild: `java -jar smali.jar a smali -o synthetic.dex`
 resource table of the same sample, renamed to **"WhatsApp"** with the package
 `com.wh4tsapp.update`. They test impersonation detection (app name resolved
 through `resources.arsc`, wrong package, plus SMS/accessibility permissions).
+
+`pack1.apk`, `pack2.apk`, `pack3.apk` are synthetic **packers** that hide
+`synthetic.dex` the way real droppers do: XOR + `DexClassLoader` (file), AES-CBC
+with a Base64 key + `InMemoryDexClassLoader`, and RC4 implemented in the app's own
+bytecode + zlib + `DexClassLoader` reached through reflection. `emu.dex`
+(from `smali-emu/`) checks interpreter arithmetic and sandbox escape attempts.

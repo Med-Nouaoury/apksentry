@@ -42,7 +42,7 @@ class Scanner(
     private val isCancelled: () -> Boolean = { false },
 ) {
     companion object {
-        const val VERSION = "3.5.0"
+        const val VERSION = "3.6.0"
         private val DEX_RE = Regex("classes\\d*\\.dex")
         private val B64_RE = Regex("[A-Za-z0-9+/=]{80,}")
         private val PATH_RE = Regex("\\.so$|^lib\\w+$|/data/|/sdcard|/storage/|/system/|\\.dex$|\\.apk$|\\.jar$")
@@ -134,6 +134,7 @@ class Scanner(
     private var hidingTool = false
     private var addedNativeLib = false
     private var packedDex = false
+    private var hiddenPayload = false
     private var progressBase = 0f
     private var progressSpan = 1f
     private var progressBaseLocal = 0f
@@ -346,6 +347,8 @@ class Scanner(
                 }
             }
         }
+        if (isBase && baseDexes.isNotEmpty() && manifest != null)
+            phase("فك الكود المخفي") { unpack(src, zip, manifest, baseDexes, deep, dexBytes, name) }
         if (deep != null) phase("التحليل المعمّق") { deep.report() }
         if (isBase && baseDexes.isNotEmpty() && opts.dataFlow) {
             report("تحليل تدفّق البيانات...", 0.25f)
@@ -543,6 +546,52 @@ class Scanner(
         if (intel) hashIntel(sha, label)
     }
 
+    /**
+     * فك الكود المخفي: إذا كان الكود يستطيع تحميل كود آخر، نشغّل كود البداية في المحاكي
+     * ونلتقط الكود الحقيقي، ثم نضمّه للتحليل كأنه جزء من التطبيق.
+     */
+    private fun unpack(src: ByteSource, zip: ZipArchive, manifest: XmlElement, dexes: MutableList<DexFile>, deep: Deep?, dexBytes: Long, name: String) {
+        // التطبيقات الصغيرة (حيث تعيش أغلب الـ droppers) نحاكي بدايتها دائماً، لأن الأغلفة تخفي
+        // DexClassLoader خلف reflection ونصوص مقسّمة. الكبيرة: فقط إذا كان كودها يحمّل كوداً مباشرة.
+        val loadsCode = Unpacker.LOADERS.any { it in facts.appApis } || dexBytes < 4 * MB
+        if (!loadsCode) return
+        report("فك الكود المخفي...", 0.22f)
+        val app = manifest.walk().firstOrNull { it.tag == "application" }
+        val pkg = manifest.attr("package") ?: return
+        // كود dex موجود أصلاً بدون تشفير داخل الموارد: نعرفه، فلا نعتبره "مخفياً"
+        val plain = HashSet<String>()
+        for (e in zip.entries) {
+            if (e.isDirectory || e.size > 32 * MB || e.size < 0x70) continue
+            val head = try { zip.readHead(e, 4) } catch (ex: Exception) { continue }
+            if (head.size == 4 && head[0] == 'd'.code.toByte() && head[1] == 'e'.code.toByte() && head[2] == 'x'.code.toByte())
+                try { plain.add(sha256(zip.readBytes(e))) } catch (ex: Exception) { }
+        }
+        val apkBytes = if (src.size <= 64 * MB) try { src.openStream().use { it.readAllCompat(64 * MB) } } catch (e: Exception) { null } else null
+        val r = Unpacker.run(zip, apkBytes, dexes.toList(), pkg, app?.attr("name"), app?.attr("appComponentFactory"), plain, ::checkCancel)
+        out("")
+        out("فك الكود المخفي (محاكاة آمنة، ${r.steps} خطوة):", Tone.HEAD)
+        if (r.payloads.isEmpty()) {
+            out("لم نجد كوداً مخفياً يُفك عند التشغيل" + (r.stops.firstOrNull()?.let { " (توقّفت المحاكاة: $it)" } ?: ""), Tone.MUTED, 1)
+            r.events.take(3).forEach { out("- $it", Tone.MUTED, 1) }
+            return
+        }
+        var total = 0
+        for (p in r.payloads.take(5)) {
+            val dex = try { DexFile(p.bytes) } catch (e: Exception) { continue }
+            total += dex.classCount
+            out("✘ فككنا كوداً مخفياً: ${sizeText(p.bytes.size.toLong())}، ${dex.classCount} كلاس (${p.source})", Tone.BAD, 1)
+            hiddenPayload = true
+            facts.addDex(dex, ::checkCancel)
+            deep?.add(dex)
+            dexes.add(dex)
+            bytes.scan(p.bytes, p.bytes.size, "$name/الكود المخفي")
+            for (t in Rules.MOD_TOOLS) if (p.bytes.contains(t.signature)) flag(t.weight, t.desc, t.kind)
+            if (intel) hashIntel(sha256(p.bytes), "الكود المخفي")
+        }
+        r.events.take(3).forEach { out("- $it", Tone.WARN, 1) }
+        flag(20, "كان يخفي كوداً مشفّراً ويفكّه وقت التشغيل، وفككناه ($total كلاس)")
+    }
+
     /** خلاصة بكلام بسيط لمن لا يعرف شيئاً عن الأمن: ماذا يعني هذا لك؟ */
     private fun plainSummary(dangers: List<Finding>, mods: List<Finding>, repack: Boolean, rep: Reputation.Match?, risk: Int): List<Line> {
         val s = ArrayList<Line>()
@@ -570,7 +619,9 @@ class Scanner(
             mods.sumOf { it.weight } >= 10 -> s.add(Line("فيه علامات تعديل على التطبيق الأصلي.", Tone.WARN))
             integrityVerified > 0 -> s.add(Line("التوقيع سليم، والملف لم يتغيّر بعد توقيعه.", Tone.OK))
         }
-        if (hidingTool || addedNativeLib || packedDex)
+        if (hiddenPayload)
+            s.add(Line("كان يخفي كوده الحقيقي مشفّراً. فككناه وفحصناه، والنتيجة أعلاه تشمله.", Tone.BAD))
+        else if (hidingTool || addedNativeLib || packedDex)
             s.add(Line("جزء من الكود مخفي أو مشفّر، فلا يمكن فحصه بالكامل.", Tone.WARN))
         val sensitive = facts.perms.count { it in Rules.RISKY_PERMS } + Rules.DANGER_BINDS.keys.count { b -> facts.manifestValues.any { it.contains(b) } }
         if (sensitive > 0) s.add(Line("يطلب ${count(sensitive, "صلاحية حساسة واحدة", "صلاحيتين حساستين", "صلاحيات حساسة", "صلاحية حساسة")} (تجدها في الأسفل مع شرح كل واحدة).", Tone.INFO))
