@@ -24,7 +24,7 @@ object Rules {
         "android.intent.action.NEW_OUTGOING_CALL" to (20 to "يراقب المكالمات الصادرة"),
         "android.intent.action.PHONE_STATE" to (10 to "يراقب حالة المكالمات"),
         "android.intent.action.PACKAGE_ADDED" to (5 to "يراقب تثبيت التطبيقات"),
-        "android.app.action.DEVICE_ADMIN_ENABLED" to (30 to "يحاول أن يصبح مدير الجهاز"),
+        "android.app.action.DEVICE_ADMIN_ENABLED" to (5 to "يحاول أن يصبح مدير الجهاز"),
     )
 
     class ModTool(val signature: ByteArray, val weight: Int, val kind: Kind, val desc: String)

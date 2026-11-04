@@ -36,7 +36,7 @@ class EndToEndTest {
         val titles = result.behaviors.map { it.message }
         assertTrue(titles.any { "حصان طروادة بنكي" in it }, "banking trojan")
         assertTrue(titles.any { "OTP" in it }, "OTP interception")
-        assertTrue(titles.any { "يسرق الرسائل" in it }, "SMS/contacts theft")
+        assertTrue(titles.any { "يرسل جهات الاتصال" in it }, "contacts exfiltration")
         assertEquals(100, result.riskScore)
     }
 

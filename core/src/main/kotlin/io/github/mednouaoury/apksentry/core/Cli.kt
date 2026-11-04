@@ -60,7 +60,13 @@ object Cli {
             val line = "[${frac?.let { (it * 100).toInt() } ?: 0}%] $msg"
             if (line != last) { err.println(line); last = line }
         })
-        val res = FileChannelSource.open(f).use { scanner.scan(it, f.name) }
+        val res = try {
+            FileChannelSource.open(f).use { scanner.scan(it, f.name) }
+        } catch (e: Exception) {
+            err.println("خطأ: ${e.javaClass.simpleName}: ${e.message}")
+            System.exit(3)
+            return
+        }
         val text = res.toText()
         out.print(text)
         if (report != null) File(report).writeText(text, Charsets.UTF_8)

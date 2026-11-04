@@ -55,11 +55,50 @@ def mb_post(key, data, raw=False, timeout=120):
     return json.loads(body)
 
 
-def mb_list(key, n):
-    j = mb_post(key, {"query": "get_file_type", "file_type": "apk", "limit": str(min(n, 1000))})
-    if j.get("query_status") != "ok":
+# عائلات أندرويد معروفة ف MalwareBazaar (اللي ما كايناش كترجع والو، ما فيها مشكل)
+FAMILIES = ["SpyNote", "Anatsa", "Hook", "Ermac", "Octo", "Coper", "Medusa", "SharkBot", "Xenomorph", "TeaBot",
+            "Cerberus", "Alien", "Hydra", "IRATA", "SpyMax", "CraxsRAT", "AhMyth", "Rafel", "BTMOB", "BtmobRAT",
+            "Godfather", "Anubis", "Vultur", "Chameleon", "Brokewell", "PixPirate", "Joker", "FluBot", "BrasDex",
+            "Copybara", "ToxicPanda", "Necro", "SpinOk", "TrickMo", "Rocinante", "Antidot", "Gigabud", "NGate",
+            "Crocodilus", "Herodotus", "SuperCard", "DroidBot", "Albiriox", "Sturnus", "RatOn", "Klopatra"]
+
+
+def mb_list(key, n, per_family=25):
+    """أحدث عينات APK + عينات من عائلات معروفة (باش نغطيو أنواع مختلفة)."""
+    seen, out = set(), []
+
+    def add(items):
+        for it in items or []:
+            if it.get("file_type") not in (None, "apk"):
+                continue
+            if it["sha256_hash"] not in seen:
+                seen.add(it["sha256_hash"])
+                out.append(it)
+
+    j = mb_post(key, {"query": "get_file_type", "file_type": "apk", "limit": "1000"})
+    if j.get("query_status") not in ("ok", "no_results"):
         raise SystemExit(f"MalwareBazaar: {j.get('query_status')}")
-    return j["data"][:n]
+    add(j.get("data"))
+    log(f"  get_file_type: {len(out)}")
+    for fam in FAMILIES:
+        if len(out) >= n * 2:
+            break
+        try:
+            j = mb_post(key, {"query": "get_siginfo", "signature": fam, "limit": str(per_family * 3)})
+            before = len(out)
+            add([x for x in (j.get("data") or []) if x.get("file_type") == "apk"][:per_family])
+            if len(out) > before:
+                log(f"  {fam}: +{len(out) - before}")
+        except Exception as e:
+            log(f"  {fam}: {e}")
+    # توازن: ما نخليوش عائلة وحدة تسيطر على النتيجة
+    random.Random(2).shuffle(out)
+    return out[:n]
+
+
+def mb_info(key, sha):
+    j = mb_post(key, {"query": "get_info", "hash": sha})
+    return (j.get("data") or [{}])[0] if j.get("query_status") == "ok" else {}
 
 
 def unzip_infected(blob, dest):
@@ -80,9 +119,15 @@ def unzip_infected(blob, dest):
         f.write(data)
 
 
-def get_malware(key, n, folder):
+def get_malware(key, n, folder, sha_list=None):
     os.makedirs(folder, exist_ok=True)
-    items = mb_list(key, n)
+    if sha_list:
+        items = []
+        for sha in sha_list:
+            info = mb_info(key, sha)
+            items.append({"sha256_hash": sha, "signature": info.get("signature"), "tags": info.get("tags")})
+    else:
+        items = mb_list(key, n)
     out = []
     for i, it in enumerate(items):
         sha = it["sha256_hash"]
@@ -146,8 +191,16 @@ def get_dir(folder):
     return out
 
 
+DIAG = re.compile(r"تعذّر|تالف|مشفّر|حماية|packer|Jiagu|ملفات الكود|النوع:|الصلاحيات \(|⚠|كود مضاف|مكتبة غير معروفة|ملاحظة|كود مُعمّى")
 RISK = re.compile(r"درجة الخطر: (\d+)/100")
 MOD = re.compile(r"درجة التعديل: (\d+)/100")
+
+
+def diag(text):
+    """ملخص قصير علاش المحرك عطا هاد النتيجة: باش نفهمو الأخطاء."""
+    lines = [l.strip() for l in text.splitlines() if DIAG.search(l)]
+    mods = text.split("🔧 علامات تعديل", 1)[1].split("\n\n", 1)[0].splitlines()[1:6] if "🔧 علامات تعديل" in text else []
+    return [l[:160] for l in lines[:25]] + ["MOD " + m.strip()[:160] for m in mods if m.strip()]
 
 
 def scan(cli, path, timeout, java):
@@ -157,17 +210,17 @@ def scan(cli, path, timeout, java):
                            capture_output=True, timeout=timeout)
         text = p.stdout.decode("utf-8", "replace")
     except subprocess.TimeoutExpired:
-        return None, None, [], "timeout", time.time() - t0
+        return None, None, [], "timeout", time.time() - t0, []
     m = RISK.search(text)
     if not m:
-        err = p.stderr.decode("utf-8", "replace").strip().splitlines()
-        return None, None, [], (err[-1] if err else "no result")[:200], time.time() - t0
+        err = [l for l in p.stderr.decode("utf-8", "replace").splitlines() if "خطأ" in l or "Exception" in l or "Error" in l]
+        return None, None, [], (err[0] if err else "no result")[:200], time.time() - t0, []
     mod = MOD.search(text)
     dangers = []
     if "⛔ علامات خطر:" in text:
         block = text.split("⛔ علامات خطر:", 1)[1].split("\n\n", 1)[0]
         dangers = [l.strip() for l in block.splitlines() if l.strip().startswith("[")][:4]
-    return int(m.group(1)), int(mod.group(1)) if mod else 0, dangers, "", time.time() - t0
+    return int(m.group(1)), int(mod.group(1)) if mod else 0, dangers, "", time.time() - t0, diag(text)
 
 
 def pct(a, b):
@@ -185,6 +238,7 @@ def main():
     ap.add_argument("--timeout", type=int, default=300)
     ap.add_argument("--keep", action="store_true", help="ما تمسحش الفيروسات من بعد الفحص")
     ap.add_argument("--java", default="java")
+    ap.add_argument("--sha-list", help="ملف فيه لائحة sha256 (باش نعاودو نفس العينات ونقارنو قبل/بعد)")
     a = ap.parse_args()
 
     os.makedirs(a.out, exist_ok=True)
@@ -197,7 +251,11 @@ def main():
         if not key:
             raise SystemExit("حط المفتاح ف MB_API_KEY (ما تكتبوش ف السكريبت)")
         log(f"تحميل {a.malware} فيروس من MalwareBazaar...")
-        items += get_malware(key, a.malware, mal_dir)
+        shas = None
+        if a.sha_list and os.path.exists(a.sha_list):
+            shas = [l.strip().split()[0] for l in open(a.sha_list) if l.strip() and not l.startswith("#")]
+            log(f"نفس العينات ديال {a.sha_list}: {len(shas)}")
+        items += get_malware(key, a.malware, mal_dir, shas)
     if a.fdroid > 0:
         items += get_fdroid(a.fdroid, os.path.join(a.out, "clean_fdroid"))
     if a.clean_dir:
@@ -207,9 +265,17 @@ def main():
 
     rows = []
     for i, (kind, path, sha, fam) in enumerate(items):
-        risk, mod, dangers, err, sec = scan(a.cli, path, a.timeout, a.java)
+        risk, mod, dangers, err, sec, dg = scan(a.cli, path, a.timeout, a.java)
         tag = "خطأ" if risk is None else f"{risk}/100"
         log(f"[{i+1}/{len(items)}] {kind:7} {fam[:20]:20} {tag}  ({sec:.1f}s)")
+        if kind == "malware":
+            print(f"SAMPLE {sha} {fam}", flush=True)
+        if risk is None:
+            print(f"ERROR {kind} {sha or os.path.basename(path)} {err}", flush=True)
+        elif (kind == "malware" and risk < MAIN_T) or (kind == "clean" and risk >= MAIN_T):
+            print(f"DIAG {kind} {fam} {sha or os.path.basename(path)} risk={risk} mod={mod}", flush=True)
+            for l in dangers + dg:
+                print(f"  | {l}", flush=True)
         rows.append({"kind": kind, "family": fam, "sha256": sha, "file": os.path.basename(path),
                      "risk": "" if risk is None else risk, "mod": "" if mod is None else mod,
                      "error": err, "seconds": f"{sec:.1f}", "top_findings": " | ".join(dangers)})
@@ -219,12 +285,14 @@ def main():
         w.writeheader()
         w.writerows(rows)
 
+    notapk = [r for r in rows if "ليس APK" in r["error"]]
     ok = [r for r in rows if r["risk"] != ""]
     mal = [r for r in ok if r["kind"] == "malware"]
     cln = [r for r in ok if r["kind"] == "clean"]
-    errs = [r for r in rows if r["risk"] == ""]
+    errs = [r for r in rows if r["risk"] == "" and r not in notapk]
     L = ["# ApkSentry benchmark", "",
          f"- فيروسات مفحوصة: {len(mal)}", f"- تطبيقات نظيفة مفحوصة: {len(cln)}",
+         f"- ملفات ماشي APK (مستثناة): {len(notapk)}",
          f"- أخطاء/وقت زائد: {len(errs)}",
          "- الفحص بلا قواعد البيانات (المحرك بوحدو)", "",
          "| الحد | فيروسات تشدّو (الكشف) | نظيفة تحسبو غلط (إنذار كاذب) |", "|---|---|---|"]

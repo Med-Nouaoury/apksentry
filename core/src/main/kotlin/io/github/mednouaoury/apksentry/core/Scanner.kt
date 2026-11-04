@@ -278,9 +278,20 @@ class Scanner(
         val manifest = zip.entry("AndroidManifest.xml")?.let {
             try { Axml.parse(zip.readBytes(it, 64 * MB)) } catch (e: Exception) { null }
         }
+        // حيل ZIP ضد التحليل: الأندرويد كيتجاهلها، والتطبيقات العادية عمرها ما كتستعملها
+        val fakeMethod = zip.entries.filter { it.fakeMethod }
+        if (fakeMethod.isNotEmpty()) {
+            out("✘ طريقة ضغط مزيّفة ف ${fakeMethod.size} ملف (${fakeMethod.take(3).joinToString { it.name }}): حيلة باش أدوات الفحص تطيح", Tone.BAD)
+            flag(35, "$name: طريقة ضغط مزيّفة باش يفشّل أدوات الفحص (حيلة كتستعملها الفيروسات)")
+        }
+        if (zip.entries.any { it.fakeEncrypted }) {
+            out("✘ علامة تشفير مزيّفة على ملفات داخل التطبيق: حيلة ضد أدوات الفحص", Tone.BAD)
+            flag(25, "$name: علامة تشفير مزيّفة داخل الملف (حيلة ضد أدوات الفحص)")
+        }
         if (manifest == null) {
             out("تعذّرت قراءة AndroidManifest.xml", Tone.WARN)
-            flag(10, "$name: ملف AndroidManifest.xml تالف أو مُعقّد عمداً", Kind.MOD)
+            // الأندرويد خاصو يقراه باش يثبّت التطبيق: إلا ما قدرناش نقراوه، غالباً معقّد عمداً
+            flag(if (zip.entry("AndroidManifest.xml") != null) 20 else 10, "$name: ملف AndroidManifest.xml تالف أو مُعقّد عمداً")
         }
         val isBase = manifest != null && manifest.attr("split") == null
         var own = emptyList<String>()

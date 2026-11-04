@@ -120,4 +120,35 @@ class LayersTest {
             .scan(ByteArraySource(apk), "wa.apk")
         assertTrue(exact.dangers.any { it.weight == 100 && "SpyNote" in it.message })
     }
+
+    /** حيلة "طريقة الضغط المزيّفة": الملفات مخزّنة بلا ضغط ولكن رقم الطريقة مزيّف. */
+    private fun badPack(): ByteArray {
+        val bos = ByteArrayOutputStream()
+        ZipOutputStream(bos).use { z ->
+            for ((n, d) in listOf("AndroidManifest.xml" to resource("AndroidManifest.bin"), "classes.dex" to resource("synthetic.dex"))) {
+                val e = ZipEntry(n)
+                e.method = ZipEntry.STORED
+                e.size = d.size.toLong(); e.compressedSize = d.size.toLong()
+                e.crc = java.util.zip.CRC32().also { it.update(d) }.value
+                z.putNextEntry(e); z.write(d); z.closeEntry()
+            }
+        }
+        val b = bos.toByteArray()
+        // نبدّل رقم الطريقة ف الترويسات المحلية (offset 8) والفهرس المركزي (offset 10)
+        for (i in 0 until b.size - 4) {
+            val sig = (b[i].toInt() and 0xff) or ((b[i + 1].toInt() and 0xff) shl 8) or ((b[i + 2].toInt() and 0xff) shl 16) or ((b[i + 3].toInt() and 0xff) shl 24)
+            val at = when (sig) { 0x04034b50 -> i + 8; 0x02014b50 -> i + 10; else -> -1 }
+            if (at > 0) { b[at] = 0x4d; b[at + 1] = 0x5a }
+        }
+        return b
+    }
+
+    @Test
+    fun fakeCompressionTrickIsReadAndFlagged() {
+        val r = Scanner(ScanOptions(dataFlow = false)).scan(ByteArraySource(badPack()), "bp.apk")
+        assertTrue(r.dangers.any { "طريقة ضغط مزيّفة" in it.message }, r.toText())
+        assertTrue(r.packageName != null, "قرينا الـ manifest رغم الحيلة")
+        assertTrue(r.behaviors.isNotEmpty(), "وقرينا الكود")
+        assertTrue(r.riskScore >= 60)
+    }
 }

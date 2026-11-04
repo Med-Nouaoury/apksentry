@@ -12,9 +12,20 @@ class ZipEntryInfo(
     val compressedSize: Long,
     val size: Long,
     internal val localHeaderOffset: Long,
+    val flags: Int = 0,
 ) {
     val isDirectory get() = name.endsWith("/")
-    val isStored get() = method == 0
+    /**
+     * الأندرويد كيقرا أي طريقة ضغط غير deflate كأنها بلا ضغط. الفيروسات كتستغل هادشي:
+     * كتحط رقم طريقة مزيّف باش أدوات الفحص تطيح، والأندرويد كيثبّت التطبيق عادي.
+     */
+    val isStored get() = method != 8
+    /** طريقة ضغط غير موجودة (حيلة ضد التحليل). */
+    val fakeMethod get() = method != 0 && method != 8
+    /** علامة "مشفّر" مزيّفة: الأندرويد كيتجاهلها، والأدوات كترفض الملف. */
+    val fakeEncrypted get() = flags and 1 != 0
+    /** الحجم الحقيقي للبيانات المخزّنة بلا ضغط. */
+    internal val storedLength get() = if (method == 0) size else compressedSize
 }
 
 /**
@@ -85,7 +96,7 @@ class ZipArchive(val src: ByteSource) {
                 }
                 e += 4 + sz
             }
-            list.add(ZipEntryInfo(name, method, comp, uncomp, lho))
+            list.add(ZipEntryInfo(name, method, comp, uncomp, lho, flags))
             p += 46 + nameLen + extraLen + commentLen
         }
         entries = list
@@ -102,12 +113,11 @@ class ZipArchive(val src: ByteSource) {
 
     /** للملفات غير المضغوطة فقط: مصدر بقراءة عشوائية بدون نسخ. */
     fun sourceOf(e: ZipEntryInfo): ByteSource? =
-        if (e.isStored) src.slice(dataOffset(e), e.size) else null
+        if (e.isStored) src.slice(dataOffset(e), e.storedLength) else null
 
     fun open(e: ZipEntryInfo): InputStream {
         val off = dataOffset(e)
         return when (e.method) {
-            0 -> src.openStream(off, e.size)
             8 -> {
                 // نضيف بايت إضافياً لأن Inflater(nowrap=true) قد يحتاجه في النهاية
                 val raw = src.openStream(off, minOf(e.compressedSize + 1, src.size - off))
@@ -118,18 +128,18 @@ class ZipArchive(val src: ByteSource) {
                     }
                 }
             }
-            else -> throw IOException("طريقة ضغط غير مدعومة (${e.method}) في ${e.name}")
+            else -> src.openStream(off, minOf(e.storedLength, src.size - off))
         }
     }
 
     fun readBytes(e: ZipEntryInfo, limit: Long = 512L * 1024 * 1024): ByteArray {
-        if (e.size > limit) throw IOException("${e.name} كبير جداً للذاكرة")
+        if ((if (e.isStored) e.storedLength else e.size) > limit) throw IOException("${e.name} كبير جداً للذاكرة")
         return open(e).use { it.readAllCompat(limit) }
     }
 
     /** يقرأ أول [n] بايت فقط. */
     fun readHead(e: ZipEntryInfo, n: Int): ByteArray {
-        val want = minOf(n.toLong(), e.size).toInt()
+        val want = minOf(n.toLong(), if (e.isStored) e.storedLength else e.size).toInt()
         val b = ByteArray(want)
         open(e).use { s ->
             var got = 0
