@@ -42,7 +42,7 @@ class Scanner(
     private val isCancelled: () -> Boolean = { false },
 ) {
     companion object {
-        const val VERSION = "3.7.0"
+        const val VERSION = "3.7.1"
         private val DEX_RE = Regex("classes\\d*\\.dex")
         private val B64_RE = Regex("[A-Za-z0-9+/=]{80,}")
         private val PATH_RE = Regex("\\.so$|^lib\\w+$|/data/|/sdcard|/storage/|/system/|\\.dex$|\\.apk$|\\.jar$")
@@ -357,7 +357,7 @@ class Scanner(
         if (isBase && baseDexes.isNotEmpty()) phase("فحص الثغرات") { checkVulns(baseDexes, own, manifest, zip) }
         if (isBase) {
             phase("كشف أدوات الحماية") { checkProtectors(zip, deep, libs) }
-            phase("كشف التشفير") { checkPacked(zip, dexBytes) }
+            phase("كشف التشفير") { checkPacked(zip, dexBytes, libs.size) }
         }
 
         // ---- المكتبات ----
@@ -587,7 +587,18 @@ class Scanner(
             bytes.scan(p.bytes, p.bytes.size, "$name/الكود المخفي")
             for (t in Rules.MOD_TOOLS) if (p.bytes.contains(t.signature)) flag(t.weight, t.desc, t.kind)
             if (intel) hashIntel(sha256(p.bytes), "الكود المخفي")
+            // ماذا يستعمل الكود المفكوك من النظام؟ (يساعد على فهم الطبقة التالية)
+            val own = (0 until dex.classCount).map(dex::className).toHashSet()
+            val apis = LinkedHashSet<String>()
+            for (c in 0 until dex.classCount) dex.scanClass(c, onInvoke = { mi ->
+                val full = dex.methodFull(mi)
+                val cls = full.substringBefore("->")
+                if (cls !in own && !cls.startsWith("Ljava/lang/") && !cls.startsWith("Ljava/util/"))
+                    apis.add(cls.substringAfterLast('/').trimEnd(';') + "." + full.substringAfter("->").substringBefore('('))
+            }, onString = {})
+            if (apis.isNotEmpty()) out("الكود المفكوك يستعمل: " + apis.take(12).joinToString(", "), Tone.MUTED, 2)
         }
+        r.stops.take(3).forEach { out("توقّفت المحاكاة: $it", Tone.MUTED, 1) }
         r.events.take(3).forEach { out("- $it", Tone.WARN, 1) }
         flag(20, "كان يخفي كوداً مشفّراً ويفكّه وقت التشغيل، وفككناه ($total كلاس)")
     }
@@ -782,7 +793,7 @@ class Scanner(
     }
 
     /** كود صغير جداً + ملف كبير مشفّر في الموارد = الكود الحقيقي مخفي (packer). */
-    private fun checkPacked(zip: ZipArchive, dexBytes: Long) {
+    private fun checkPacked(zip: ZipArchive, dexBytes: Long, libCount: Int) {
         if (dexBytes > 400 * 1024) return
         for (e in zip.entries) {
             if (!e.name.startsWith("assets/") || e.size < 512 * 1024) continue
@@ -800,6 +811,11 @@ class Scanner(
                     // حماية تجارية معروفة كنعرفوها بالسمية؛ هادي حماية مجهولة كتفك كود مشفّر وتشغّلو ف الذاكرة
                     out("✘ ويفك هذا الملف ويشغّله ككود، بأداة حماية مجهولة (ليست من شركة معروفة)", Tone.BAD, 1)
                     flag(30, "يخفي الكود الحقيقي مشفّراً في ${e.name} ويشغّله في الذاكرة (dropper/packer مجهول)")
+                } else if (!hiddenPayload && protectorsFound.isEmpty() && dexBytes < 64 * 1024 && libCount > 0) {
+                    // تقريباً لا كود Java، والفك يقع داخل مكتبة native بأداة غير معروفة: لا نرى أي شيء مما يفعله.
+                    // لا نقول "سليم" لشيء لم نستطع رؤيته.
+                    out("✘ كل كوده تقريباً مشفّر ويُفك داخل مكتبة native بأداة مجهولة، ولم نستطع فكه", Tone.BAD, 1)
+                    flag(30, "كوده الحقيقي كله مشفّر بأداة مجهولة (ليست من شركة معروفة) ولم نستطع فكه: لا يمكن الحكم بسلامته")
                 }
                 return
             }
@@ -1217,7 +1233,7 @@ class Scanner(
                 notes.add("وجدنا ${soft.size} قدرات قوية (التفاصيل في الأقسام)، لكن لم نحسبها خطراً لأن هذه النسخة الرسمية من ${rep.source}")
         }
 
-        if (repack && (hidingTool || addedNativeLib))
+        if (repack && (hidingTool || addedNativeLib || (packedDex && !hiddenPayload && protectorsFound.isEmpty())))
             flag(20, "أضاف المعدّل كوداً مخفياً داخل مكتبة native لا يمكن فحصه: راقب اتصالات التطبيق")
 
         val order = compareByDescending<Finding> { it.weight }.thenByDescending { it.message }

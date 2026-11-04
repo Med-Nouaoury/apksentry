@@ -203,7 +203,7 @@ def get_dir(folder):
     return out
 
 
-DIAG = re.compile(r"تعذّر|تالف|مشفّر|حماية|packer|Jiagu|ملفات الكود|النوع:|الصلاحيات \(|⚠|كود مضاف|مكتبة غير معروفة|ملاحظة|كود مُعمّى")
+DIAG = re.compile(r"فككنا|توقّفت المحاكاة|الكود المفكوك|تعذّر|تالف|مشفّر|حماية|packer|Jiagu|ملفات الكود|النوع:|الصلاحيات \(|⚠|كود مضاف|مكتبة غير معروفة|ملاحظة|كود مُعمّى")
 RISK = re.compile(r"درجة الخطر: (\d+)/100")
 MOD = re.compile(r"درجة التعديل: (\d+)/100")
 
@@ -212,7 +212,7 @@ def diag(text):
     """ملخص قصير علاش المحرك عطا هاد النتيجة: باش نفهمو الأخطاء."""
     lines = [l.strip() for l in text.splitlines() if DIAG.search(l)]
     mods = text.split("🔧 علامات تعديل", 1)[1].split("\n\n", 1)[0].splitlines()[1:6] if "🔧 علامات تعديل" in text else []
-    return [l[:160] for l in lines[:25]] + ["MOD " + m.strip()[:160] for m in mods if m.strip()]
+    return [l[:300] for l in lines[:40]] + ["MOD " + m.strip()[:160] for m in mods if m.strip()]
 
 
 def scan(cli, path, timeout, java):

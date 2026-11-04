@@ -155,6 +155,19 @@ object Unpacker {
                     dex.scanClass(c, onInvoke = { mi -> if (dex.methodFull(mi) in LOADERS || dex.methodFull(mi) in DECRYPT_HINTS) loads = true }, onString = {})
                     if (loads) ac.methods.values.filter { it.codeOff != 0 && it.name != "<clinit>" }.take(8).forEach(::runMethod)
                 }
+                // طبقة صغيرة لا تظهر فيها علامات واضحة (reflection، نصوص مقسّمة): نجرّب كل وظائفها
+                if (rt.captured.size == until && dex.classCount <= 60) {
+                    var budget = 40
+                    for (c in 0 until dex.classCount) {
+                        val ac = emu.classes[dex.className(c)] ?: continue
+                        for (m in ac.methods.values) {
+                            if (budget <= 0 || rt.captured.size > until) break
+                            if (m.codeOff == 0 || m.name == "<clinit>") continue
+                            budget--
+                            runMethod(m)
+                        }
+                    }
+                }
             }
         }
         return Result(rt.captured.toList(), rt.events, emu.steps, stops)
