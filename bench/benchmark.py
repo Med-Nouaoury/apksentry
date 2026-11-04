@@ -203,6 +203,7 @@ def get_dir(folder):
     return out
 
 
+CONTRA = re.compile(r"^CONTRADICTION: (.*)$", re.M)
 DIAG = re.compile(r"فككنا|توقّفت المحاكاة|الكود المفكوك|تعذّر|تالف|مشفّر|حماية|packer|Jiagu|ملفات الكود|النوع:|الصلاحيات \(|⚠|كود مضاف|مكتبة غير معروفة|ملاحظة|كود مُعمّى")
 RISK = re.compile(r"درجة الخطر: (\d+)/100")
 MOD = re.compile(r"درجة التعديل: (\d+)/100")
@@ -222,17 +223,17 @@ def scan(cli, path, timeout, java):
                            capture_output=True, timeout=timeout)
         text = p.stdout.decode("utf-8", "replace")
     except subprocess.TimeoutExpired:
-        return None, None, [], "timeout", time.time() - t0, []
+        return None, None, [], "timeout", time.time() - t0, [], []
     m = RISK.search(text)
     if not m:
         err = [l for l in p.stderr.decode("utf-8", "replace").splitlines() if "خطأ" in l or "Exception" in l or "Error" in l]
-        return None, None, [], (err[0] if err else "no result")[:200], time.time() - t0, []
+        return None, None, [], (err[0] if err else "no result")[:200], time.time() - t0, [], []
     mod = MOD.search(text)
     dangers = []
     if "⛔ علامات خطر:" in text:
         block = text.split("⛔ علامات خطر:", 1)[1].split("\n\n", 1)[0]
         dangers = [l.strip() for l in block.splitlines() if l.strip().startswith("[")][:4]
-    return int(m.group(1)), int(mod.group(1)) if mod else 0, dangers, "", time.time() - t0, diag(text)
+    return int(m.group(1)), int(mod.group(1)) if mod else 0, dangers, "", time.time() - t0, diag(text), CONTRA.findall(text)
 
 
 def pct(a, b):
@@ -279,7 +280,9 @@ def main():
 
     rows = []
     for i, (kind, path, sha, fam) in enumerate(items):
-        risk, mod, dangers, err, sec, dg = scan(a.cli, path, a.timeout, a.java)
+        risk, mod, dangers, err, sec, dg, contra = scan(a.cli, path, a.timeout, a.java)
+        for c in contra:
+            print(f"CONTRA {kind} {fam} {sha or os.path.basename(path)}: {c}", flush=True)
         tag = "خطأ" if risk is None else f"{risk}/100"
         log(f"[{i+1}/{len(items)}] {kind:7} {fam[:20]:20} {tag}  ({sec:.1f}s)")
         if kind == "malware":
@@ -292,7 +295,8 @@ def main():
                 print(f"  | {l}", flush=True)
         rows.append({"kind": kind, "family": fam, "sha256": sha, "file": os.path.basename(path),
                      "risk": "" if risk is None else risk, "mod": "" if mod is None else mod,
-                     "error": err, "seconds": f"{sec:.1f}", "top_findings": " | ".join(dangers)})
+                     "error": err, "seconds": f"{sec:.1f}", "top_findings": " | ".join(dangers),
+                     "contradictions": " | ".join(contra)})
 
     with open(os.path.join(a.out, "results.csv"), "w", newline="", encoding="utf-8") as f:
         w = csv.DictWriter(f, fieldnames=list(rows[0].keys()))
@@ -308,7 +312,8 @@ def main():
          f"- فيروسات مفحوصة: {len(mal)}", f"- تطبيقات نظيفة مفحوصة: {len(cln)}",
          f"- ملفات ماشي APK (مستثناة): {len(notapk)}",
          f"- أخطاء/وقت زائد: {len(errs)}",
-         "- الفحص بلا قواعد البيانات (المحرك بوحدو)", "",
+         "- الفحص بلا قواعد البيانات (المحرك بوحدو)",
+         f"- تقارير فيها تناقض: {sum(1 for r in rows if r.get('contradictions'))} (خاصها تكون 0)", "",
          "| الحد | فيروسات تشدّو (الكشف) | نظيفة تحسبو غلط (إنذار كاذب) |", "|---|---|---|"]
     for t in THRESHOLDS:
         L.append(f"| خطر ≥ {t} | {pct(sum(r['risk'] >= t for r in mal), len(mal))} "
@@ -327,6 +332,9 @@ def main():
     L += ["", f"## تطبيقات نظيفة تحسبات غلط ({len(fp)})", ""]
     for r in fp[:60]:
         L.append(f"- {r['file']} خطر {r['risk']}: {r['top_findings']}")
+    con = [r for r in rows if r.get("contradictions")]
+    if con:
+        L += ["", f"## تقارير فيها تناقض ({len(con)})", ""] + [f"- {r['kind']} {r['file'][:40]}: {r['contradictions']}" for r in con[:40]]
     if errs:
         L += ["", "## أخطاء", ""] + [f"- {r['kind']} {r['file'][:40]}: {r['error']}" for r in errs[:30]]
     with open(os.path.join(a.out, "report.md"), "w", encoding="utf-8") as f:
@@ -335,7 +343,7 @@ def main():
     if not a.keep and os.path.isdir(mal_dir):
         shutil.rmtree(mal_dir, ignore_errors=True)
     log(f"\nالتقرير: {os.path.join(a.out, 'report.md')}")
-    print("\n".join(L[:12]))
+    print("\n".join(L[:13]))
 
 
 def get_dir_any(folder):

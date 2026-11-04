@@ -42,7 +42,7 @@ class Scanner(
     private val isCancelled: () -> Boolean = { false },
 ) {
     companion object {
-        const val VERSION = "3.8.5"
+        const val VERSION = "3.9.0"
         private val DEX_RE = Regex("classes\\d*\\.dex")
         private val B64_RE = Regex("[A-Za-z0-9+/=]{80,}")
         private val PATH_RE = Regex("\\.so$|^lib\\w+$|/data/|/sdcard|/storage/|/system/|\\.dex$|\\.apk$|\\.jar$")
@@ -686,20 +686,24 @@ class Scanner(
             s.add(Line("يستعمل حيلاً ليختبئ من أدوات الفحص، والتطبيقات العادية لا تفعل هذا.", Tone.BAD))
         if (nativeHidden.isNotEmpty())
             s.add(Line("يخفي داخل كود native (حيث لا تراه أدوات الفحص العادية): " + nativeHidden.take(3).joinToString("، ") + ".", Tone.BAD))
-        // سلوك قوي = دليل؛ قدرة مزدوجة الاستعمال (وزن أقل) = تحتاج انتباهاً فقط، ولا نسمّيها "فيروساً"
-        val strong = behaviors.filter { it.weight >= 25 }
-        val soft = behaviors.filter { it.weight < 25 }
+        // سلوك قوي = دليل؛ قدرة مزدوجة الاستعمال (لها سياق "عادي في ...") = تحتاج انتباهاً فقط، ولا نسمّيها "فيروساً"
+        val strong = behaviors.filter { !it.message.contains("(عادي") }
+        val soft = behaviors.filter { it.message.contains("(عادي") }
         if (strong.isNotEmpty())
             s.add(Line("يتصرّف مثل الفيروسات: " + strong.first().message.substringBefore(" (").substringBefore(":") +
                 (if (behaviors.size > 1) "، و${count(behaviors.size - 1, "سلوك آخر", "سلوكين آخرين", "سلوكيات أخرى", "سلوكاً آخر")}" else "") + ".", Tone.BAD))
         else if (soft.isNotEmpty()) {
             for (b in soft.take(2)) {
-                val what = b.message.substringBefore(" (").substringBefore(":")
-                val ctx = b.message.substringAfter(" (", "").substringBefore(")")
-                s.add(Line("يستطيع أن $what" + (if (ctx.contains("عادي")) ": $ctx." else ". تأكّد أن هذا متوقّع من هذا النوع من التطبيقات."), Tone.WARN))
+                val what = b.message.substringBefore(" (")
+                val ctx = b.message.substringAfter(" (", "").substringBeforeLast(")").substringBefore("، ومشبوه")
+                s.add(Line("يستطيع أن $what" + (if (ctx.startsWith("عادي")) ": $ctx، فتأكّد أن هذا متوقّع منه." else "."), Tone.WARN))
             }
         }
-        else if (all.none { it.contains("فيروس معروف") } && nativeHidden.isEmpty()) {
+        else if (risk >= 35 && s.none { it.tone == Tone.BAD }) {
+            // حكم متوسط أو مرتفع بلا سلوك معروف: نقول السبب الأقوى بدل "لم نجد شيئاً"
+            dangers.firstOrNull()?.let { s.add(Line("أخطر ما وجدناه: " + it.message.removePrefix("سلوك: ").substringBefore(" (عادي") + ".", Tone.BAD)) }
+        }
+        else if (all.none { it.contains("فيروس معروف") } && nativeHidden.isEmpty() && risk < 35) {
             // إذا كان جزء من الكود مخفياً ولم نفكّه، لا نعد بشيء عن الجزء الذي لم نره
             if (!hiddenPayload && (hidingTool || addedNativeLib || packedDex))
                 s.add(Line("في الكود الذي استطعنا قراءته، لم نجد سلوك فيروس. لكن جزءاً منه مخفي، ولا نعرف ما يفعله.", Tone.WARN))

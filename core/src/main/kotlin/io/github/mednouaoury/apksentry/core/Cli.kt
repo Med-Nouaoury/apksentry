@@ -72,6 +72,8 @@ object Cli {
         }
         val text = res.toText()
         out.print(text)
+        // تناقضات في التقرير (يجمعها القياس ويفشل بسببها)
+        for (c in Consistency.check(res)) out.println("CONTRADICTION: $c")
         if (report != null) File(report).writeText(text, Charsets.UTF_8)
         err.println("المدة: ${res.durationMs / 1000.0} ثانية")
     }

@@ -15,8 +15,8 @@ android {
         applicationId = "io.github.mednouaoury.apksentry"
         minSdk = 26
         targetSdk = 35
-        versionCode = 20
-        versionName = "3.8.5"
+        versionCode = 21
+        versionName = "3.9.0"
     }
 
     signingConfigs {
