@@ -103,6 +103,11 @@ class LayersTest {
         assertEquals("WhatsApp", r.appLabel)
         assertTrue(r.dangers.any { it.message.startsWith("ينتحل هوية WhatsApp") }, r.toText())
         assertTrue(r.behaviors.any { "يستعمل اسم WhatsApp ويطلب صلاحيات خطيرة" in it.message })
+        // الخلاصة البسيطة والصلاحيات للواجهة
+        assertTrue(r.summary.any { it.tone == Tone.BAD && "يتنكّر" in it.text }, r.summary.joinToString { it.text })
+        assertEquals("لا تثبّته.", r.action)
+        assertTrue("android.permission.BIND_ACCESSIBILITY_SERVICE" in r.permissions)
+        assertTrue("android.permission.SEND_SMS" in r.permissions)
     }
 
     @Test

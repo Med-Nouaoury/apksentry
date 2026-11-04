@@ -56,6 +56,14 @@ class ScanResult(
     val tlsh: String? = null,
     /** النسخة مطابقة لمصدر موثوق (مثلاً F-Droid). */
     val trustedSource: String? = null,
+    /** أعاد توقيعه طرف غير المطوّر (التوقيع سليم تقنياً لكنه ليس توقيع الشركة). */
+    val thirdPartySigned: Boolean = false,
+    /** كل الصلاحيات (والخدمات الخطيرة) التي يطلبها. */
+    val permissions: List<String> = emptyList(),
+    /** خلاصة بكلام بسيط لغير المتخصصين. */
+    val summary: List<Line> = emptyList(),
+    /** ماذا تفعل؟ جملة واحدة. */
+    val action: String = "",
 ) {
     val level: RiskLevel get() = RiskLevel.of(riskScore)
     val isModified: Boolean get() = modScore >= 10
@@ -66,6 +74,11 @@ class ScanResult(
         sb.append("ApkSentry ${Scanner.VERSION}\n")
         sb.append("الملف: $fileName\n")
         appLabel?.let { sb.append("التطبيق: $it\n") }
+        if (summary.isNotEmpty()) {
+            sb.append("\n===== الخلاصة =====\n")
+            summary.forEach { l -> sb.append(when (l.tone) { Tone.OK -> "✔ "; Tone.BAD -> "✘ "; Tone.WARN -> "⚠ "; else -> "• " }).append(l.text).append('\n') }
+            if (action.isNotEmpty()) sb.append("← ").append(action).append('\n')
+        }
         for (s in sections) {
             sb.append("\n===== ${s.title} =====\n")
             for (l in s.lines) sb.append("  ".repeat(l.indent)).append(l.text).append('\n')

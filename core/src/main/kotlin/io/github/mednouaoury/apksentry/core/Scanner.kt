@@ -42,7 +42,7 @@ class Scanner(
     private val isCancelled: () -> Boolean = { false },
 ) {
     companion object {
-        const val VERSION = "3.4.0"
+        const val VERSION = "3.5.0"
         private val DEX_RE = Regex("classes\\d*\\.dex")
         private val B64_RE = Regex("[A-Za-z0-9+/=]{80,}")
         private val PATH_RE = Regex("\\.so$|^lib\\w+$|/data/|/sdcard|/storage/|/system/|\\.dex$|\\.apk$|\\.jar$")
@@ -55,6 +55,7 @@ class Scanner(
             "service" to "service", "receiver" to "receiver", "provider" to "provider",
         )
         private const val MB = 1024L * 1024
+        private val EVASION = Regex("طريقة ضغط مزيّفة|علامة تشفير مزيّفة|حيلة لإغراق|حروف مخفية|يخفي الكود الحقيقي مشفّراً|AndroidManifest.xml تالف")
         private val HARD_EVIDENCE = Regex("MalwareBazaar|VirusTotal|فيروس معروف|عُدِّل بعد توقيعه|شهادات مختلفة")
         private val ZERO_WIDTH = setOf('\u200B', '\u2060', '\u2061', '\u2062', '\u2063', '\u2064', '\uFEFF', '\u180E', '\u00AD')
         /** نحسب البصمة التقريبية للملفات حتى هذا الحجم (الفيروسات صغيرة عادة). */
@@ -128,6 +129,7 @@ class Scanner(
     private var integrityUnchecked = 0
     private var packageName: String? = null
     private var appLabel: String? = null
+    private val permList = LinkedHashSet<String>()
     private var mainTlsh: String? = null
     private var hidingTool = false
     private var addedNativeLib = false
@@ -401,7 +403,11 @@ class Scanner(
         if (risky > 0) flag(minOf(12, risky * 3), "$risky صلاحيات حساسة")
         val allValues = m.walk().flatMap { it.attrs.values.asSequence() }.toList()
         facts.manifestValues.addAll(allValues)
-        for ((b, desc) in Rules.DANGER_BINDS) if (allValues.any { it.contains(b) }) flag(15, "يطلب $desc")
+        if (permList.isEmpty()) permList.addAll(perms)
+        for ((b, desc) in Rules.DANGER_BINDS) if (allValues.any { it.contains(b) }) {
+            flag(15, "يطلب $desc")
+            permList.add("android.permission.$b")
+        }
         for ((act, wd) in Rules.AUTO_ACTIONS) if (allValues.any { it == act }) flag(wd.first, wd.second)
         val app = m.walk().firstOrNull { it.tag == "application" }
         app?.attr("name")?.let {
@@ -535,6 +541,56 @@ class Scanner(
             }
         }
         if (intel) hashIntel(sha, label)
+    }
+
+    /** خلاصة بكلام بسيط لمن لا يعرف شيئاً عن الأمن: ماذا يعني هذا لك؟ */
+    private fun plainSummary(dangers: List<Finding>, mods: List<Finding>, repack: Boolean, rep: Reputation.Match?, risk: Int): List<Line> {
+        val s = ArrayList<Line>()
+        val all = dangers.map { it.message }
+        if (all.any { it.contains("فيروس معروف") || it.startsWith("MalwareBazaar") })
+            s.add(Line("هذا فيروس معروف ومسجّل في قواعد بيانات الفيروسات.", Tone.BAD))
+        if (all.any { it.contains("عُدِّل بعد توقيعه") })
+            s.add(Line("الملف تغيّر بعد توقيعه: تالف أو عُبث به.", Tone.BAD))
+        all.firstOrNull { it.startsWith("ينتحل هوية") }?.let {
+            s.add(Line("يتنكّر في اسم تطبيق مشهور (${it.substringAfter("ينتحل هوية ").substringBefore(":")}) وهو ليس هو.", Tone.BAD))
+        }
+        if (all.any { EVASION.containsMatchIn(it) })
+            s.add(Line("يستعمل حيلاً ليختبئ من أدوات الفحص، والتطبيقات العادية لا تفعل هذا.", Tone.BAD))
+        if (behaviors.isNotEmpty())
+            s.add(Line("يتصرّف مثل الفيروسات: " + behaviors.first().message.substringBefore(" (").substringBefore(":") +
+                (if (behaviors.size > 1) "، و${count(behaviors.size - 1, "سلوك آخر", "سلوكين آخرين", "سلوكيات أخرى", "سلوكاً آخر")}" else "") + ".", Tone.BAD))
+        else if (all.none { it.contains("فيروس معروف") })
+            s.add(Line("لم نجد سلوك فيروس: لا يسرق رسائلك ولا يتحكم في شاشتك ولا يرسل بياناتك.", Tone.OK))
+        when {
+            rep != null -> s.add(Line("هذه النسخة الرسمية من ${rep.source} نفسها.", Tone.OK))
+            repack -> {
+                val who = mods.firstNotNullOfOrNull { f -> f.message.substringAfter("وليس من المطور: ", "").takeIf { it.isNotEmpty() } }
+                s.add(Line("نسخة معدّلة: أعاد توقيعها طرف آخر" + (who?.let { " ($it)" } ?: "") + "، وليست من الشركة المطوّرة.", Tone.WARN))
+            }
+            mods.sumOf { it.weight } >= 10 -> s.add(Line("فيه علامات تعديل على التطبيق الأصلي.", Tone.WARN))
+            integrityVerified > 0 -> s.add(Line("التوقيع سليم، والملف لم يتغيّر بعد توقيعه.", Tone.OK))
+        }
+        if (hidingTool || addedNativeLib || packedDex)
+            s.add(Line("جزء من الكود مخفي أو مشفّر، فلا يمكن فحصه بالكامل.", Tone.WARN))
+        val sensitive = facts.perms.count { it in Rules.RISKY_PERMS } + Rules.DANGER_BINDS.keys.count { b -> facts.manifestValues.any { it.contains(b) } }
+        if (sensitive > 0) s.add(Line("يطلب ${count(sensitive, "صلاحية حساسة واحدة", "صلاحيتين حساستين", "صلاحيات حساسة", "صلاحية حساسة")} (تجدها في الأسفل مع شرح كل واحدة).", Tone.INFO))
+        return s
+    }
+
+    /** العدد مع المعدود بالعربية: واحد، اثنان، 3-10، 11+. */
+    private fun count(n: Int, one: String, two: String, few: String, many: String) = when {
+        n == 1 -> one
+        n == 2 -> two
+        n in 3..10 -> "$n $few"
+        else -> "$n $many"
+    }
+
+    private fun actionFor(level: RiskLevel, repack: Boolean, behaves: Boolean): String = when (level) {
+        RiskLevel.HIGH -> "لا تثبّته."
+        RiskLevel.MEDIUM -> if (behaves) "لا تثبّته إلا إذا كنت تعرف المطوّر وتثق به." else "انتبه: راجع النقاط أدناه قبل أن تقرّر."
+        RiskLevel.LOW_MEDIUM -> if (repack) "يمكن تثبيته بحذر: اقطع عنه الإنترنت من تبويب المراقبة، ولا تسجّل فيه بحساب مهم." else "يمكن تثبيته بحذر."
+        RiskLevel.LOW -> if (repack) "يمكن تثبيته بحذر: هذه نسخة معدّلة، فاقطع عنها الإنترنت من تبويب المراقبة ولا تسجّل فيها بحساب مهم."
+            else "لم نجد ما يمنع تثبيته. راقب اتصالاته في أول تشغيل."
     }
 
     private fun checkComponents(m: XmlElement, pkg: String, own: List<String>) {
@@ -936,7 +992,8 @@ class Scanner(
             if (c != "exec" && c != "network") continue
             val what = Rules.NATIVE_CATS.getValue(c).second
             if (added) flag(15, "المكتبة $low (من الكود المضاف) تستطيع $what", Kind.ADDED)
-            else if (!known) flag(5, "المكتبة $low تستطيع $what (عادي غالباً لمحرك لعبة)")
+            // قدرة عادية لأي محرك ألعاب أو مكتبة شبكة: نعرضها في التفاصيل ولا نحسبها خطراً
+            else if (!known) flag(0, "المكتبة $low تستطيع $what (عادي غالباً لمحرك لعبة)", Kind.INFO)
         }
 
         // وظائف JNI
@@ -1109,6 +1166,9 @@ class Scanner(
                 notes.add("وجدنا ${soft.size} قدرات قوية (التفاصيل في الأقسام)، لكن لم نحسبها خطراً لأن هذه النسخة الرسمية من ${rep.source}")
         }
 
+        if (repack && (hidingTool || addedNativeLib))
+            flag(20, "أضاف المعدّل كوداً مخفياً داخل مكتبة native لا يمكن فحصه: راقب اتصالات التطبيق")
+
         val order = compareByDescending<Finding> { it.weight }.thenByDescending { it.message }
         val dangers = findings.values.filter { it.kind == Kind.DANGER }.sortedWith(order)
         val mods = findings.values.filter { it.kind == Kind.MOD }.sortedWith(order)
@@ -1133,6 +1193,7 @@ class Scanner(
         if (vt == null && mb == null)
             advice.add("لمقارنة الملف بقواعد بيانات الفيروسات المعروفة، أضف مفتاح MalwareBazaar أو VirusTotal في الإعدادات.")
 
+        val summary = plainSummary(dangers, mods, repack, rep, risk)
         return ScanResult(
             fileName = fileName,
             packageName = packageName,
@@ -1152,6 +1213,10 @@ class Scanner(
             durationMs = ms,
             appLabel = appLabel,
             trustedSource = rep?.source,
+            thirdPartySigned = repack,
+            permissions = permList.toList(),
+            summary = summary,
+            action = actionFor(RiskLevel.of(risk), repack, behaviors.isNotEmpty()),
             tlsh = mainTlsh,
         )
     }

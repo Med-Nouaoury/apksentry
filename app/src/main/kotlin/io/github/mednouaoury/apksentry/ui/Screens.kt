@@ -486,6 +486,7 @@ private fun ResultScreen(r: ScanResult, vm: ScanViewModel, onNew: () -> Unit) {
         verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
         item { VerdictHero(r) }
+        item { SummaryCard(r, levelColor(r.level)) }
         item {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 StatTile("${r.behaviors.size}", "سلوك خبيث", if (r.behaviors.isEmpty()) ok else bad, Modifier.weight(1f))
@@ -507,6 +508,13 @@ private fun ResultScreen(r: ScanResult, vm: ScanViewModel, onNew: () -> Unit) {
                 OutlinedButton(onClick = onNew, modifier = Modifier.weight(1f), shape = MaterialTheme.shapes.medium, contentPadding = pad) {
                     Icon(Icons.Filled.Refresh, null, Modifier.size(16.dp)); Spacer(Modifier.width(4.dp)); Text("ملف آخر", maxLines = 1, softWrap = false)
                 }
+            }
+        }
+        item { PermissionsCard(r.permissions) }
+        item {
+            Column(Modifier.padding(top = 6.dp)) {
+                Text("التفاصيل", style = MaterialTheme.typography.titleMedium)
+                Hint("الأسباب التي بنينا عليها الحكم. الأرقام الصغيرة بجانب كل سطر هي وزنه في درجة الخطر.")
             }
         }
         if (r.behaviors.isNotEmpty()) item {
@@ -618,7 +626,10 @@ private fun VerdictHero(r: ScanResult) {
                 }
                 Text(r.level.explanation, style = MaterialTheme.typography.bodyMedium, color = cs.onSurfaceVariant)
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    if (r.integrityVerified) Pill("✔ التوقيع سليم", StatusColors.ok())
+                    when {
+                        r.integrityVerified && r.thirdPartySigned -> Pill("⚠ موقّع من طرف آخر، لا من المطوّر", StatusColors.warn())
+                        r.integrityVerified -> Pill("✔ التوقيع سليم", StatusColors.ok())
+                    }
                     r.trustedSource?.let { Pill("✔ نسخة $it الرسمية", StatusColors.ok()) }
                     if (r.signers.size > 1) Pill("شهادات مختلفة!", StatusColors.bad())
                 }
