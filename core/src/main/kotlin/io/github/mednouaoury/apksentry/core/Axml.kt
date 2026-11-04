@@ -22,6 +22,8 @@ object Axml {
 
     /** أسماء بعض الخصائص حسب رقمها، لأن بعض التطبيقات تحذف الأسماء لتعقيد القراءة. */
     private val ATTR_IDS = mapOf(
+        0x01010001 to "label",
+        0x01010002 to "icon",
         0x01010003 to "name",
         0x01010010 to "exported",
         0x0101000f to "debuggable",

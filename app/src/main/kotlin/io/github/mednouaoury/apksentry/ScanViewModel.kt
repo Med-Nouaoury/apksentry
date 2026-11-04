@@ -12,6 +12,8 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import io.github.mednouaoury.apksentry.core.ByteSource
 import io.github.mednouaoury.apksentry.core.FileChannelSource
+import io.github.mednouaoury.apksentry.core.MalwareBazaarFeed
+import io.github.mednouaoury.apksentry.core.SimilarityDb
 import io.github.mednouaoury.apksentry.core.ScanCancelledException
 import io.github.mednouaoury.apksentry.core.ScanOptions
 import io.github.mednouaoury.apksentry.core.ScanResult
@@ -48,6 +50,63 @@ class ScanViewModel(app: Application) : AndroidViewModel(app) {
         private set
 
     private val trust = TrustStore(app)
+
+    // ---- قاعدة البصمات التقريبية (TLSH) للفيروسات المعروفة، محفوظة على الهاتف ----
+    private val simFile = File(app.filesDir, "malware_tlsh.csv")
+    @Volatile
+    private var simDb: SimilarityDb? = null
+    var simCount by mutableStateOf(prefs.getInt("sim_count", 0))
+        private set
+    var simUpdatedAt by mutableStateOf(prefs.getLong("sim_updated", 0L))
+        private set
+    var simBusy by mutableStateOf(false)
+        private set
+    var simMessage by mutableStateOf<String?>(null)
+        private set
+
+    private fun loadSimDb(): SimilarityDb {
+        simDb?.let { return it }
+        val db = try {
+            if (simFile.exists()) SimilarityDb.parse(simFile.readText()) else SimilarityDb.EMPTY
+        } catch (e: Exception) {
+            SimilarityDb.EMPTY
+        }
+        simDb = db
+        return db
+    }
+
+    /** نجلب أحدث 1000 فيروس أندرويد من MalwareBazaar ونضيفهم للقاعدة المحفوظة. */
+    fun updateSimilarityDb() {
+        if (simBusy) return
+        val key = mbKey
+        if (key.isBlank()) {
+            simMessage = "أدخل مفتاح MalwareBazaar أولاً"
+            return
+        }
+        simBusy = true
+        simMessage = "جاري التحميل..."
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val old = loadSimDb()
+                val fresh = MalwareBazaarFeed.recentApks(key)
+                val merged = old.merge(fresh)
+                val tmp = File(simFile.path + ".tmp")
+                tmp.writeText(merged.serialize())
+                if (!tmp.renameTo(simFile)) { simFile.delete(); tmp.renameTo(simFile) }
+                simDb = merged
+                val added = merged.size - old.size
+                val now = System.currentTimeMillis()
+                prefs.edit().putInt("sim_count", merged.size).putLong("sim_updated", now).apply()
+                simCount = merged.size
+                simUpdatedAt = now
+                simMessage = "تمت إضافة $added فيروس جديد ✔"
+            } catch (e: Exception) {
+                simMessage = "فشل التحديث: ${e.message ?: e.javaClass.simpleName}"
+            } finally {
+                simBusy = false
+            }
+        }
+    }
 
     @Volatile
     private var cancelled = false
@@ -110,6 +169,7 @@ class ScanViewModel(app: Application) : AndroidViewModel(app) {
                     officialCerts = { pkg -> trust.officialCerts(pkg) },
                     tempDir = ctx.cacheDir,
                     dataFlow = dataFlow,
+                    similarity = loadSimDb(),
                 )
                 var lastUpdate = 0L
                 val scanner = Scanner(options, { msg, fraction ->

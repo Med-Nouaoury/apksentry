@@ -50,6 +50,10 @@ class ScanResult(
     val notes: List<String>,
     val advice: List<String>,
     val durationMs: Long,
+    /** اسم التطبيق الظاهر للمستخدم. */
+    val appLabel: String? = null,
+    /** البصمة التقريبية TLSH للملف. */
+    val tlsh: String? = null,
 ) {
     val level: RiskLevel get() = RiskLevel.of(riskScore)
     val isModified: Boolean get() = modScore >= 10
@@ -59,6 +63,7 @@ class ScanResult(
         val sb = StringBuilder()
         sb.append("ApkSentry ${Scanner.VERSION}\n")
         sb.append("الملف: $fileName\n")
+        appLabel?.let { sb.append("التطبيق: $it\n") }
         for (s in sections) {
             sb.append("\n===== ${s.title} =====\n")
             for (l in s.lines) sb.append("  ".repeat(l.indent)).append(l.text).append('\n')

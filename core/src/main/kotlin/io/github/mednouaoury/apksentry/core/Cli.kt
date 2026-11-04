@@ -17,6 +17,7 @@ object Cli {
         var mbKey: String? = null
         var trustFile: String? = null
         var noFlow = false
+        var simFile: String? = null
         var expect: String? = null
         var report: String? = null
         var i = 0
@@ -26,6 +27,7 @@ object Cli {
                 "--mb" -> mbKey = args.getOrNull(++i)
                 "--trusted" -> trustFile = args.getOrNull(++i)
                 "--no-flow" -> noFlow = true
+                "--tlsh-db" -> simFile = args.getOrNull(++i)
                 "--expect" -> expect = args.getOrNull(++i)
                 "--out" -> report = args.getOrNull(++i)
                 else -> path = args[i]
@@ -34,7 +36,7 @@ object Cli {
         }
         if (path == null) {
             err.println("الاستعمال: apksentry <ملف APK/APKS/XAPK> [--vt مفتاح] [--mb مفتاح_MalwareBazaar] [--expect بصمة]")
-            err.println("          [--trusted ملف_الشهادات.txt] [--no-flow] [--out تقرير.txt]")
+            err.println("          [--trusted ملف_الشهادات.txt] [--tlsh-db قاعدة_البصمات.csv] [--no-flow] [--out تقرير.txt]")
             err.println("ملف الشهادات: كل سطر = اسم_الحزمة بصمة_SHA256")
             System.exit(2)
         }
@@ -52,6 +54,7 @@ object Cli {
             expectedCert = expect,
             officialCerts = { pkg -> trusted.filter { it.first == pkg }.map { OfficialCert(it.second, "قائمتك الموثوقة") } },
             dataFlow = !noFlow,
+            similarity = simFile?.let { SimilarityDb.parse(File(it).readText()) } ?: SimilarityDb.EMPTY,
         )
         val scanner = Scanner(options, { msg, frac ->
             val line = "[${frac?.let { (it * 100).toInt() } ?: 0}%] $msg"

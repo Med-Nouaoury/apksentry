@@ -22,6 +22,8 @@ class ScanOptions(
     val tempDir: File = File(System.getProperty("java.io.tmpdir")),
     /** تحليل تدفّق البيانات (أبطأ لكنه أعمق). */
     val dataFlow: Boolean = true,
+    /** بصمات TLSH لفيروسات معروفة (تعمل بدون إنترنت). */
+    val similarity: SimilarityDb = SimilarityDb.EMPTY,
 )
 
 fun interface ProgressListener {
@@ -38,7 +40,7 @@ class Scanner(
     private val isCancelled: () -> Boolean = { false },
 ) {
     companion object {
-        const val VERSION = "3.1.0"
+        const val VERSION = "3.3.0"
         private val DEX_RE = Regex("classes\\d*\\.dex")
         private val B64_RE = Regex("[A-Za-z0-9+/=]{80,}")
         private val PATH_RE = Regex("\\.so$|^lib\\w+$|/data/|/sdcard|/storage/|/system/|\\.dex$|\\.apk$|\\.jar$")
@@ -51,6 +53,8 @@ class Scanner(
             "service" to "service", "receiver" to "receiver", "provider" to "provider",
         )
         private const val MB = 1024L * 1024
+        /** نحسب البصمة التقريبية للملفات حتى هذا الحجم (الفيروسات صغيرة عادة). */
+        private const val TLSH_MAX = 300 * MB
 
         /** حزم أدوات التعديل المعروفة: تُعتبر كوداً مضافاً دائماً. */
         private val INJECT_NAMES = listOf("bin.mt", "np.dcc", "np.manager", "com.chelpus", "com.android.support.menu")
@@ -119,6 +123,8 @@ class Scanner(
     private var integrityVerified = 0
     private var integrityUnchecked = 0
     private var packageName: String? = null
+    private var appLabel: String? = null
+    private var mainTlsh: String? = null
     private var hidingTool = false
     private var addedNativeLib = false
     private var packedDex = false
@@ -180,13 +186,8 @@ class Scanner(
         out("الحجم: ${sizeText(src.size)}")
         report("قراءة الملف...", 0f)
         val outer = ZipArchive(src)
-        if (intel) {
-            progressSpan = 0f
-            report("حساب بصمة الملف كاملاً...")
-            val sha = sha256(src.openStream())
-            out("البصمة SHA-256: $sha", Tone.MUTED)
-            hashIntel(sha, "الملف كاملاً")
-        }
+        progressSpan = 0f
+        phase("بصمة الملف") { fingerprint(src, "الملف كاملاً", top = true) }
         if (outer.entry("AndroidManifest.xml") != null) {
             out("النوع: APK عادي")
             progressBase = 0f; progressSpan = 1f
@@ -286,6 +287,7 @@ class Scanner(
         if (isBase) {
             var pkg = ""
             phase("قراءة الصلاحيات") { pkg = checkManifest(manifest!!) }
+            phase("كشف انتحال الهوية") { checkIdentity(manifest!!, zip, pkg) }
             if (pkg.isNotEmpty()) {
                 if (packageName == null) packageName = pkg
                 own = listOf("L" + pkg.replace('.', '/') + "/", "L" + pkg.split('.').take(2).joinToString("/") + "/")
@@ -349,9 +351,9 @@ class Scanner(
             progressSpanLocal = 0.55f / libs.size
             phase("تحليل ${e.name}") { checkLib(zip, e, name) }
         }
-        if (intel && inBundle) {
+        if (inBundle) {
             report("حساب بصمة $name...", 0.95f)
-            phase("بصمة $name") { hashIntel(sha256(src.openStream()), name) }
+            phase("بصمة $name") { fingerprint(src, name, top = false) }
         }
     }
 
@@ -389,6 +391,122 @@ class Scanner(
         if (app?.attr("debuggable") == "true") flag(10, "التطبيق في وضع التصحيح (debuggable)", Kind.MOD)
         if (app?.attr("usesCleartextTraffic") == "true") notes.add("يسمح باتصالات إنترنت غير مشفّرة")
         return pkg
+    }
+
+    /** كل الأسماء اللي كيشوفها المستخدم: اسم التطبيق واسم الأيقونة ف الشاشة الرئيسية، بكل اللغات. */
+    private fun labelsOf(m: XmlElement, zip: ZipArchive): List<String> {
+        val raw = ArrayList<String>()
+        m.walk().firstOrNull { it.tag == "application" }?.attr("label")?.let { raw.add(it) }
+        for (a in m.walk().filter { it.tag == "activity" || it.tag == "activity-alias" }) {
+            val launcher = a.walk().any { it.tag == "category" && it.attr("name") == "android.intent.category.LAUNCHER" }
+            if (launcher) a.attr("label")?.let { raw.add(it) }
+        }
+        if (raw.isEmpty()) return emptyList()
+        val arsc by lazy {
+            zip.entry("resources.arsc")?.takeIf { it.size in 12..(64 * MB) }?.let { Arsc.parse(zip.readBytes(it, 64 * MB)) }
+        }
+        val out = LinkedHashSet<String>()
+        for (r in raw) {
+            if (r.startsWith("@0x")) {
+                val id = r.substring(3).toLongOrNull(16)?.toInt() ?: continue
+                arsc?.strings(id)?.forEach { out.add(it.second.trim()) }
+            } else {
+                out.add(r.trim())
+            }
+        }
+        return out.filter { it.isNotEmpty() && it.length <= 100 }
+    }
+
+    private fun checkIdentity(m: XmlElement, zip: ZipArchive, pkg: String) {
+        val labels = labelsOf(m, zip)
+        if (labels.isNotEmpty()) {
+            if (appLabel == null) appLabel = labels.first()
+            val more = if (labels.size > 1) " (و${labels.size - 1} أسماء بلغات أخرى)" else ""
+            out("اسم التطبيق: ${labels.first()}$more")
+        }
+        if (pkg.isEmpty()) return
+        Impersonation.APPS.firstOrNull { pkg in it.packages }?.let {
+            out("هذه حزمة تطبيق ${it.name} الرسمية: التوقيع هو اللي كيبيّن واش النسخة من الشركة", Tone.INFO)
+            return
+        }
+        val hit = Impersonation.check(labels, pkg) ?: return
+        val official = hit.app.packages.first()
+        val values = m.walk().flatMap { it.attrs.values.asSequence() }.toSet()
+        val danger = Impersonation.DANGEROUS_WITH_IMPERSONATION.filter { (p, _) -> p in facts.perms || "android.permission.$p" in values }.values
+        out("")
+        out("انتحال الهوية:", Tone.HEAD)
+        when (hit.strength) {
+            ImpStrength.STRONG -> {
+                out("✘ ${hit.reason}، ولكن الحزمة $pkg ماشي الحزمة الرسمية ($official)", Tone.BAD, 1)
+                flag(30, "ينتحل هوية ${hit.app.name}: ${hit.reason}، والحزمة ليست الرسمية")
+            }
+            ImpStrength.WEAK -> {
+                out("⚠ ${hit.reason}، والحزمة ماشي ديال الشركة ($official). قد يكون تطبيقاً مستقلاً أو نسخة معدّلة", Tone.WARN, 1)
+                notes.add("يستعمل اسم ${hit.app.name} وهو ليس التطبيق الرسمي")
+            }
+        }
+        if (danger.isNotEmpty()) {
+            out("✘ ويطلب: ${danger.joinToString("، ")}. هادي هي طريقة الفيروسات البنكية", Tone.BAD, 1)
+            val title = "يستعمل اسم ${hit.app.name} ويطلب صلاحيات خطيرة (${danger.joinToString("، ")})"
+            flag(35, "سلوك: $title")
+            behaviors.add(Finding(35, title, Kind.DANGER))
+        }
+    }
+
+    /** بصمة SHA-256 + البصمة التقريبية TLSH في قراءة واحدة، ثم المقارنة مع قواعد الفيروسات. */
+    private fun fingerprint(src: ByteSource, label: String, top: Boolean) {
+        val db = opts.similarity
+        val small = src.size <= TLSH_MAX
+        if (!small && !intel) {
+            if (top) out("البصمة التقريبية: الملف كبير (${sizeText(src.size)})، نحسبها فقط للملفات حتى ${sizeText(TLSH_MAX)}", Tone.MUTED)
+            return
+        }
+        report("حساب بصمة $label...")
+        val md = MessageDigest.getInstance("SHA-256")
+        val t = if (small) Tlsh() else null
+        src.openStream().use { s ->
+            val buf = ByteArray(1 shl 20)
+            var done = 0L
+            while (true) {
+                checkCancel()
+                val r = s.read(buf)
+                if (r < 0) break
+                md.update(buf, 0, r)
+                t?.update(buf, 0, r)
+                done += r
+                if (top && src.size > 0) progress.onProgress("حساب بصمة الملف... ${done * 100 / src.size}%", null)
+            }
+        }
+        val sha = md.digest().toHex()
+        val tl = t?.digest()
+        if (top) {
+            out("البصمة SHA-256: $sha", Tone.MUTED)
+            tl?.let { out("البصمة التقريبية TLSH: $it", Tone.MUTED); mainTlsh = it }
+        } else {
+            tl?.let { out("البصمة التقريبية TLSH: $it", Tone.MUTED) }
+        }
+        // مطابقة تامة مع قاعدة الفيروسات المحفوظة (بدون إنترنت)
+        db.entries.firstOrNull { it.sha256 == sha }?.let { e ->
+            out("✘ $label: فيروس معروف في القاعدة المحفوظة! العائلة: ${e.family}", Tone.BAD, 1)
+            flag(100, "$label فيروس معروف من عائلة ${e.family} (مطابقة تامة)")
+        }
+        if (tl != null && db.size > 0) {
+            val m = db.nearest(tl)
+            if (m != null && m.entry.sha256 != sha) {
+                when {
+                    m.distance <= SimilarityDb.VERY_CLOSE -> {
+                        out("✘ $label شبه متطابق مع فيروس معروف من عائلة ${m.entry.family} (المسافة ${m.distance})", Tone.BAD, 1)
+                        flag(70, "$label نسخة معدّلة قليلاً من فيروس معروف (${m.entry.family})، المسافة ${m.distance}")
+                    }
+                    m.distance <= SimilarityDb.CLOSE -> {
+                        out("⚠ $label يشبه فيروساً معروفاً من عائلة ${m.entry.family} (المسافة ${m.distance})", Tone.WARN, 1)
+                        flag(30, "$label يشبه فيروساً معروفاً (${m.entry.family})، المسافة ${m.distance}")
+                    }
+                    top -> out("مقارنة مع ${db.size} فيروس معروف: لا يشبه أي واحد ✔ (أقرب مسافة ${m.distance})", Tone.OK, 1)
+                }
+            }
+        }
+        if (intel) hashIntel(sha, label)
     }
 
     private fun checkComponents(m: XmlElement, pkg: String, own: List<String>) {
@@ -825,20 +943,6 @@ class Scanner(
     // ---------------- قواعد البيانات (VirusTotal و MalwareBazaar) ----------------
     private fun sha256(data: ByteArray) = MessageDigest.getInstance("SHA-256").digest(data).toHex()
 
-    private fun sha256(input: java.io.InputStream): String {
-        val md = MessageDigest.getInstance("SHA-256")
-        input.use { s ->
-            val buf = ByteArray(1 shl 20)
-            while (true) {
-                checkCancel()
-                val r = s.read(buf)
-                if (r < 0) break
-                md.update(buf, 0, r)
-            }
-        }
-        return md.digest().toHex()
-    }
-
     private fun hashIntel(sha: String, label: String) {
         if (!checkedHashes.add(sha)) return
         mbCheck(sha, label)
@@ -972,6 +1076,8 @@ class Scanner(
             advice.add("راجع المواقع غير المألوفة: إذا كان التطبيق لا يحتاج الإنترنت، امنعه منه بعد التثبيت.")
         if (vulns.any { it.severity >= 3 })
             advice.add("التطبيق فيه ثغرات أمنية عالية: لا تستعمله على شبكات Wi-Fi عامة، ولا تدخل فيه بيانات حساسة.")
+        if (mb != null && opts.similarity.size == 0)
+            advice.add("حدّث قاعدة البصمات التقريبية من الإعدادات، باش نكشفو النسخ المعدّلة من الفيروسات المعروفة حتى بلا أنترنت.")
         if (vt == null && mb == null)
             advice.add("لمقارنة الملف بقواعد بيانات الفيروسات المعروفة، أضف مفتاح MalwareBazaar أو VirusTotal في الإعدادات.")
 
@@ -992,6 +1098,8 @@ class Scanner(
             notes = notes,
             advice = advice,
             durationMs = ms,
+            appLabel = appLabel,
+            tlsh = mainTlsh,
         )
     }
 }

@@ -15,6 +15,8 @@
 | الطبقة | ما يفعله |
 |---|---|
 | **قواعد بيانات الفيروسات** | يبحث ببصمة الملف وكل ملفاته الداخلية في MalwareBazaar و VirusTotal (بمفاتيحك المجانية، البصمات فقط) |
+| **البصمة التقريبية (TLSH)** | بصمة "تشبه" ماشي "تطابق": نسخة معدّلة شوية من فيروس معروف كتبقى قريبة منو. القاعدة كتتحمّل من MalwareBazaar (آخر 1000 فيروس أندرويد في كل تحديث) وكتخدم بلا أنترنت. تطبيق TLSH مكتوب بـ Kotlin ومتطابق 100% مع المكتبة الرسمية py-tlsh |
+| **انتحال الهوية** | يقرأ اسم التطبيق الظاهر (من resources.arsc، بكل اللغات) ويقارنه بـ 40 تطبيق مشهور (WhatsApp، Instagram، Telegram، Binance، Chrome...): الاسم نفسه، خطأ إملائي مقصود، حروف سيريلية تشبه اللاتينية، أرقام بدل حروف، أو حزمة مقلّدة بحرف واحد. إذا كان الاسم ديال تطبيق مشهور والحزمة ماشي ديالو، ويطلب الرسائل أو خدمة الوصول، فهذا أسلوب الفيروسات البنكية |
 | **سلوك الفيروسات المعروفة** | أكثر من 20 قاعدة لعائلات أندرويد الشائعة: أحصنة طروادة البنكية، keyloggers، سرقة الرسائل ورموز OTP، احتيال SMS، clipper، برامج الفدية، droppers، الأبواب الخلفية... |
 | **تتبّع البيانات (taint analysis)** | يتبع بياناتك (IMEI، الموقع، جهات الاتصال، الرسائل، الحافظة، الحسابات، الإشعارات، نصوص الشاشة) من مصدرها، عبر السجلات والحقول والوظائف، حتى الإنترنت أو SMS |
 | **فك تعليمات DEX كاملة** | كل تعليمة وكل فرع (CFG)، من يستدعي ماذا، والنصوص المشفّرة ودوال فكّها |
@@ -129,6 +131,8 @@ GitHub Actions يبني التطبيق ونسخة الحاسوب وينشرهم�
 - Official-signer verification against the Play-installed copy or a user trust list; AOSP public test-key detection.
 - App security audit: trust-all TrustManagers, allow-all HostnameVerifiers, WebView SSL-error bypass, ECB/DES/RC4, hard-coded keys, exported providers, network-security-config issues, leaked secrets and exfiltration tokens (Telegram bots, Discord webhooks).
 - Hardened against hostile input: phase isolation, work/time budgets, fuzz-tested parsers. Unknown-library findings only count when the package shows repackaging evidence.
+- TLSH fuzzy hashing (pure Kotlin, byte-identical to the reference py-tlsh) matched offline against an on-device database of recent Android malware pulled from MalwareBazaar, to catch lightly modified variants of known samples.
+- Impersonation detection: resolves the user-visible app name from `resources.arsc` in every locale and compares it with ~40 popular apps (exact name, deliberate typos, Cyrillic look-alikes, leetspeak, one-character package typosquats). A famous name on a foreign package combined with SMS/accessibility/overlay permissions is flagged as the banking-trojan pattern.
 - Hash lookups on MalwareBazaar and VirusTotal with your own free keys (hashes only).
 - Handles multi-gigabyte split bundles with low memory by streaming and reading stored entries in place.
 - Optional VirusTotal hash lookups with your own API key (hashes only, never files).
@@ -136,4 +140,4 @@ GitHub Actions يبني التطبيق ونسخة الحاسوب وينشرهم�
 
 It is a static scanner: it cannot see what native code does at runtime. Pair it with network monitoring (e.g. PCAPdroid) for modified apps.
 
-License: [MIT](LICENSE). Font: IBM Plex Sans Arabic ([SIL OFL 1.1](licenses/IBM-Plex-Sans-Arabic-OFL.txt)). Icons: Material Icons (Apache 2.0).
+License: [MIT](LICENSE). Font: IBM Plex Sans Arabic ([SIL OFL 1.1](licenses/IBM-Plex-Sans-Arabic-OFL.txt)). Icons: Material Icons (Apache 2.0). TLSH algorithm and tables ported from the Trend Micro reference implementation (Apache 2.0 / BSD).

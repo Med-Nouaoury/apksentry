@@ -42,6 +42,7 @@ import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.Button
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -270,6 +271,7 @@ private fun SettingsCard(vm: ScanViewModel, open: Boolean, onToggle: () -> Unit)
                     modifier = Modifier.fillMaxWidth(), shape = MaterialTheme.shapes.medium,
                 )
                 Hint("قاعدة بيانات مجانية للفيروسات المعروفة. المفتاح مجاني من auth.abuse.ch. نرسل البصمة فقط.")
+                SimilarityDbRow(vm)
                 OutlinedTextField(
                     value = vm.vtKey, onValueChange = vm::updateVtKey, singleLine = true,
                     label = { Text("مفتاح VirusTotal") }, visualTransformation = PasswordVisualTransformation(),
@@ -293,6 +295,30 @@ private fun SettingsCard(vm: ScanViewModel, open: Boolean, onToggle: () -> Unit)
     }
 }
 
+/** قاعدة البصمات التقريبية: كتخلّي التطبيق يعرف النسخ المعدّلة من الفيروسات المعروفة بلا أنترنت. */
+@Composable
+private fun SimilarityDbRow(vm: ScanViewModel) {
+    val cs = MaterialTheme.colorScheme
+    Surface(shape = MaterialTheme.shapes.medium, color = cs.surfaceContainerHigh) {
+        Column(Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("قاعدة البصمات التقريبية", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
+                    val info = if (vm.simCount == 0) "فارغة" else {
+                        val date = java.text.DateFormat.getDateInstance(java.text.DateFormat.MEDIUM).format(java.util.Date(vm.simUpdatedAt))
+                        "${vm.simCount} فيروس، آخر تحديث $date"
+                    }
+                    Hint(info)
+                }
+                if (vm.simBusy) CircularProgressIndicator(Modifier.size(22.dp), strokeWidth = 2.dp)
+                else FilledTonalButton(onClick = vm::updateSimilarityDb, enabled = vm.mbKey.isNotBlank()) { Text("تحديث") }
+            }
+            Hint("كتعرف النسخ المعدّلة شوية من فيروسات معروفة، وكتخدم بلا أنترنت. كل تحديث كيزيد آخر 1000 فيروس أندرويد من MalwareBazaar.")
+            vm.simMessage?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = if (it.startsWith("فشل")) StatusColors.bad() else cs.primary) }
+        }
+    }
+}
+
 @Composable
 internal fun Hint(text: String) {
     Text(text, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -305,7 +331,7 @@ private val STAGES = listOf("قراءة الملف والتوقيع", "تحلي�
 
 private fun stageOf(msg: String): Int = when {
     "كتابة النتيجة" in msg -> 5
-    "VirusTotal" in msg || "MalwareBazaar" in msg || "بصمة" in msg -> 4
+    "VirusTotal" in msg || "MalwareBazaar" in msg -> 4
     ".so" in msg -> 3
     "تدفّق" in msg || "الثغرات" in msg -> 2
     "classes" in msg || ".dex" in msg -> 1
@@ -552,7 +578,7 @@ private fun VerdictHero(r: ScanResult) {
                     }
                     Column(Modifier.weight(1f)) {
                         Text(levelTitle(r.level), style = MaterialTheme.typography.headlineSmall, color = color)
-                        Text(r.fileName, style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text(r.appLabel ?: r.fileName, style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
                         r.packageName?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = cs.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis) }
                     }
                 }

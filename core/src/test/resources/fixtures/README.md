@@ -10,3 +10,8 @@ Telegram token...) so the tests can check that ApkSentry detects each pattern.
 permissions, an accessibility service and an SMS receiver.
 
 Rebuild: `java -jar smali.jar a smali -o synthetic.dex`
+
+`fake_whatsapp_manifest.bin` + `fake_whatsapp.arsc` are the compiled manifest and
+resource table of the same sample, renamed to **"WhatsApp"** with the package
+`com.wh4tsapp.update`. They test impersonation detection (app name resolved
+through `resources.arsc`, wrong package, plus SMS/accessibility permissions).
