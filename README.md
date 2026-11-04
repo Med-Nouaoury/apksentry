@@ -86,18 +86,19 @@ Reported separately from the risk score: trust-all `TrustManager`, permissive `H
 
 The engine is evaluated with [`bench/benchmark.py`](bench/benchmark.py) on real Android malware from [MalwareBazaar](https://bazaar.abuse.ch/) and clean apps from [F-Droid](https://f-droid.org/). The benchmark runs on disposable GitHub Actions runners, and samples are deleted after scanning.
 
-**Latest run: v3.7.1, November 2026.** 246 malware samples across 25 families (Hydra, Cerberus, Alien, SpyNote, Coper, IRATA, droppers and others), and 394 clean apps.
+**Latest run: v3.7.2, November 2026.** 246 malware samples across 25 families (Hydra, Cerberus, Alien, SpyNote, Coper, IRATA, droppers and others), and 382 clean apps.
 
 | Risk threshold | Malware detected | Clean apps flagged |
 |---|---:|---:|
-| ≥ 10 | 95.5% | 20.6% |
-| **≥ 35** | **91.1%** | **7.9%** |
-| ≥ 60 | 83.7% | 2.5% |
+| ≥ 10 | 95.5% | 23.6% |
+| **≥ 35** | **91.9%** | **8.1%** |
+| ≥ 60 | 84.6% | 3.7% |
 
 How to read these numbers:
 
 - The benchmark runs the **engine alone**. Hash lookups, the TLSH database and the F-Droid reputation layer are disabled, because the samples come from those same sources and would inflate the results.
 - Most clean apps that are flagged are legitimate **dual-use tools** (remote control, device finders, app lockers). In the app, the F-Droid reputation layer recognizes their official builds.
+- The clean set follows the latest F-Droid releases, so it changes slightly between runs. False-positive rates move by about one point from that alone.
 - The malware set reflects what MalwareBazaar receives, which is mostly known banking families. Detection of novel or targeted malware will be lower.
 
 Reproduce it locally (requires a MalwareBazaar key):
