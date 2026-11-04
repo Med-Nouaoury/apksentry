@@ -42,7 +42,7 @@ class Scanner(
     private val isCancelled: () -> Boolean = { false },
 ) {
     companion object {
-        const val VERSION = "3.8.1"
+        const val VERSION = "3.8.2"
         private val DEX_RE = Regex("classes\\d*\\.dex")
         private val B64_RE = Regex("[A-Za-z0-9+/=]{80,}")
         private val PATH_RE = Regex("\\.so$|^lib\\w+$|/data/|/sdcard|/storage/|/system/|\\.dex$|\\.apk$|\\.jar$")
@@ -119,6 +119,10 @@ class Scanner(
     private val injectedTokens = HashSet<String>()
     private val pendingComponents = ArrayList<String>()
     private val fingerprints = LinkedHashSet<String>()
+    /** شهادات مرتبطة ببعضها رسمياً (المطور غيّر مفتاحه بـ key rotation). */
+    private val rotationLinked = HashSet<String>()
+    private var currentSigner: String? = null
+    private val rotated get() = fingerprints.size > 1 && rotationLinked.containsAll(fingerprints)
     private val facts = Facts()
     private val behaviors = ArrayList<Finding>()
     private val protectorsFound = LinkedHashSet<String>()
@@ -134,6 +138,7 @@ class Scanner(
     private var hidingTool = false
     private var addedNativeLib = false
     private var packedDex = false
+    private var officialMatch: String? = null
     private var nativeRan = false
     private val nativeHidden = LinkedHashSet<String>()
     private var hiddenPayload = false
@@ -687,6 +692,8 @@ class Scanner(
                 s.add(Line("لم نجد سلوك فيروس: لا يسرق رسائلك ولا يتحكم في شاشتك ولا يرسل بياناتك.", Tone.OK))
         }
         when {
+            rep != null && rep.source == "Google Play" -> s.add(Line("موقّع من المطوّر الرسمي نفسه (نفس شهادة النسخة المثبتة من Google Play).", Tone.OK))
+            rep != null && rep.source == "المطوّر" -> s.add(Line("موقّع بنفس شهادة المطوّر التي حفظتها في قائمتك الموثوقة.", Tone.OK))
             rep != null -> s.add(Line("هذه النسخة الرسمية من ${rep.source} نفسها.", Tone.OK))
             repack -> {
                 val who = mods.firstNotNullOfOrNull { f -> f.message.substringAfter("وليس من المطور: ", "").takeIf { it.isNotEmpty() } }
@@ -759,6 +766,8 @@ class Scanner(
                 out("صالحة من $nb إلى $na، المفتاح ${c.keyBits ?: "?"} بت، التوقيع: $schemes", Tone.MUTED)
             }
             fingerprints.add(fp)
+            val lin = group.flatMap { it.lineage }.filter { it != fp }
+            if (lin.isNotEmpty()) { rotationLinked.add(fp); rotationLinked.addAll(lin); currentSigner = fp }
             when {
                 isAospTestKey(c.subject) ->
                     flag(25, "موقّع بمفتاح الاختبار العلني لـ AOSP (مفتاح منشور، أي شخص يستطيع التوقيع به)", Kind.MOD)
@@ -1233,7 +1242,9 @@ class Scanner(
     // ---------------- النتيجة ----------------
     private fun finish(fileName: String, ms: Long): ScanResult {
         val first = sections.first()
-        if (fingerprints.size > 1) flag(40, "ملفات الحزمة موقَّعة بشهادات مختلفة!")
+        if (rotated)
+            first.lines.add(Line("✔ المطوّر غيّر مفتاح التوقيع بطريقة رسمية (key rotation): الشهادة الجديدة مرتبطة بالقديمة بتوقيع", Tone.OK))
+        else if (fingerprints.size > 1) flag(40, "ملفات الحزمة موقَّعة بشهادات مختلفة!")
 
         // التوقيع الرسمي
         opts.expectedCert?.lowercase()?.replace(Regex("[^0-9a-f]"), "")?.takeIf { it.isNotEmpty() }?.let { exp ->
@@ -1247,6 +1258,7 @@ class Scanner(
                 val match = official.firstOrNull { it.sha256.lowercase() in fingerprints }
                 if (match != null) {
                     first.lines.add(Line("✔ موقّع بنفس شهادة ${match.source}: النسخة من المطور الحقيقي", Tone.OK))
+                    officialMatch = if (match.source.contains("Google Play")) "Google Play" else "المطوّر"
                 } else {
                     val src = official.first().source
                     first.lines.add(Line("✘ التوقيع يختلف عن ${src}: هذه النسخة ليست من المطور الرسمي", Tone.BAD))
@@ -1255,8 +1267,10 @@ class Scanner(
             }
         }
 
-        val rep = if (opts.reputation && pkg != null) Reputation.lookup(pkg, fingerprints) else null
-        if (rep != null) first.lines.add(Line("✔ نفس النسخة التي يوزّعها ${rep.source} بالضبط (مبنية من الكود المصدري ومراجَعة)", Tone.OK))
+        // مصدر موثوق: F-Droid (مبنية من الكود)، أو نفس شهادة النسخة الرسمية (Google Play / قائمتك)
+        val rep = (if (opts.reputation && pkg != null) Reputation.lookup(pkg, fingerprints) else null)
+            ?: officialMatch?.let { Reputation.Match(it) }
+        if (rep != null && officialMatch == null) first.lines.add(Line("✔ نفس النسخة التي يوزّعها ${rep.source} بالضبط (مبنية من الكود المصدري ومراجَعة)", Tone.OK))
 
         if (bytes.ips.isNotEmpty()) flag(10, "عناوين IP مكتوبة مباشرة في الكود: ${bytes.ips.take(10).joinToString(", ")}")
         for (w in bytes.minerHits) flag(40, "آثار برنامج تعدين عملات رقمية في $w")
@@ -1295,7 +1309,7 @@ class Scanner(
             for (f in soft) findings[f.message] = Finding(f.weight, f.message, Kind.INFO)
             behaviors.removeAll { b -> soft.any { it.message.endsWith(b.message) } }
             if (soft.isNotEmpty())
-                notes.add("وجدنا ${soft.size} قدرات قوية (التفاصيل في الأقسام)، لكن لم نحسبها خطراً لأن هذه النسخة الرسمية من ${rep.source}")
+                notes.add("وجدنا ${soft.size} قدرات قوية (التفاصيل في الأقسام)، لكن لم نحسبها خطراً لأن " + (if (officialMatch != null) "النسخة موقّعة من المطوّر الرسمي" else "هذه النسخة الرسمية من ${rep.source}"))
         }
 
         if (repack && (hidingTool || addedNativeLib || (packedDex && !hiddenPayload && protectorsFound.isEmpty())))
@@ -1333,7 +1347,7 @@ class Scanner(
             dangers = dangers,
             mods = mods,
             behaviors = behaviors.sortedByDescending { it.weight },
-            signers = fingerprints.toList(),
+            signers = if (rotated) listOfNotNull(currentSigner) else fingerprints.toList(),
             vulns = vulns.sortedByDescending { it.severity },
             secrets = secrets,
             integrityVerified = integrityVerified > 0 && findings.keys.none { it.contains("عُدِّل بعد توقيعه") },

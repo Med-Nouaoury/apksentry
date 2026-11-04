@@ -39,3 +39,7 @@ against the JDK's `jni.h`:
 - `libesc.so`: sandbox-escape attempts (`system`, raw `execve`/`openat` syscalls, file writes, infinite loop).
 
 `arm64_cases.txt.gz`: 400 random instructions with register/memory results recorded from Unicorn (`tools/armfuzz/gen.py`).
+
+`rotated.apk` / `mixed.apk`: hand-built APK Signing Blocks (validated with `apksigtool`). `rotated`: v2 signed
+with an old key, v3 with a new key plus a proof-of-rotation lineage linking them (legitimate key rotation, as
+WhatsApp does). `mixed`: the same old v2 key next to an unrelated v3 key with no lineage (suspicious).

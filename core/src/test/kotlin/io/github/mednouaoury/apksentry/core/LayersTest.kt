@@ -173,4 +173,27 @@ class LayersTest {
         assertTrue(!Reputation.matches(known, emptyList()), "بلا توقيع")
         assertTrue(!Reputation.matches(null, listOf("aa")), "حزمة ماشي ف F-Droid")
     }
+
+    /**
+     * تغيير مفتاح التوقيع رسمياً (key rotation في v3، مثل WhatsApp): v2 بالمفتاح القديم و v3 بالجديد
+     * مع سلسلة proof-of-rotation تربطهما = مطوّر واحد. نفس الشكل بدون السلسلة (مفتاح قديم منسوخ + مفتاح مهاجم) = مشبوه.
+     */
+    @Test
+    fun keyRotationIsOneDeveloper() {
+        val old = "4b71a54f131c4343044f9370bedba6db3696c4c8bedb6aa23344c8ba21cd516d"
+        val new = "ef2b3a22d2822bfe5343138d5226760bc452f76d1ee7dafad4413a4b07892110"
+        val rot = Signing.read(ZipArchive(ByteArraySource(resource("rotated.apk"))))
+        val v3 = rot.single { it.scheme == "v3" }
+        assertEquals(new, v3.sha256)
+        assertTrue(old in v3.lineage, v3.lineage.toString())
+        val r1 = Scanner(ScanOptions(dataFlow = false)).scan(ByteArraySource(resource("rotated.apk")), "rotated.apk")
+        assertEquals(listOf(new), r1.signers)
+        assertTrue(r1.dangers.none { "شهادات مختلفة" in it.message }, r1.toText())
+
+        val mixed = Signing.read(ZipArchive(ByteArraySource(resource("mixed.apk"))))
+        assertTrue(mixed.all { it.lineage.isEmpty() })
+        val r2 = Scanner(ScanOptions(dataFlow = false)).scan(ByteArraySource(resource("mixed.apk")), "mixed.apk")
+        assertEquals(2, r2.signers.size)
+        assertTrue(r2.dangers.any { "شهادات مختلفة" in it.message }, r2.toText())
+    }
 }

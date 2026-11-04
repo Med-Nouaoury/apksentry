@@ -19,6 +19,8 @@ class CertInfo(
     val notAfter: Date,
     val keyBits: Int?,
     val scheme: String,
+    /** شهادات قديمة مرتبطة بهذه الشهادة رسمياً (proof-of-rotation في توقيع v3). */
+    val lineage: List<String> = emptyList(),
 ) {
     fun dates(): Pair<String, String> {
         val f = SimpleDateFormat("yyyy-MM-dd", Locale.US).apply { timeZone = TimeZone.getTimeZone("UTC") }
@@ -106,7 +108,8 @@ object Signing {
                 if (cl <= 0 || c + 4 + cl > certsEnd) break
                 try {
                     val cert = cf.generateCertificate(ByteArrayInputStream(v, c + 4, cl)) as X509Certificate
-                    out.add(info(cert, scheme))
+                    val lineage = if (scheme.startsWith("v3")) rotation(v, sd + 4 + digestsLen + 4 + certsLen, sd + sdLen) else emptyList()
+                    out.add(info(cert, scheme, lineage))
                 } catch (_: Exception) {
                 }
                 c += 4 + cl
@@ -116,7 +119,46 @@ object Signing {
         return out
     }
 
-    private fun info(c: X509Certificate, scheme: String): CertInfo {
+    private const val PROOF_OF_ROTATION = 0x3ba06f8c
+
+    /**
+     * في توقيع v3: بعد الشهادات يأتي minSdk و maxSdk ثم "خصائص إضافية".
+     * خاصية proof-of-rotation تحتوي سلسلة الشهادات القديمة التي انتقل منها المطور إلى الجديدة.
+     */
+    private fun rotation(v: ByteArray, from: Int, end: Int): List<String> {
+        var a = from + 8
+        if (a + 4 > end) return emptyList()
+        val attrsEnd = minOf(end, a + 4 + v.i32(a))
+        a += 4
+        val out = ArrayList<String>()
+        val cf = CertificateFactory.getInstance("X.509")
+        while (a + 8 <= attrsEnd) {
+            val len = v.i32(a)
+            if (len < 4 || a + 4 + len > attrsEnd) break
+            if (v.i32(a + 4) == PROOF_OF_ROTATION) {
+                // نبحث عن كل شهادة X.509 مسبوقة بطولها داخل القيمة (أكثر متانة من تتبّع كل مستوى)
+                val vs = a + 8; val ve = a + 4 + len
+                var i = vs
+                while (i + 6 <= ve) {
+                    val cl = v.i32(i)
+                    if (cl in 100..16384 && i + 4 + cl <= ve && v[i + 4] == 0x30.toByte() && v[i + 5] == 0x82.toByte()) {
+                        try {
+                            val cert = cf.generateCertificate(ByteArrayInputStream(v, i + 4, cl)) as X509Certificate
+                            out.add(MessageDigest.getInstance("SHA-256").digest(cert.encoded).toHex())
+                            i += 4 + cl
+                            continue
+                        } catch (_: Exception) {
+                        }
+                    }
+                    i++
+                }
+            }
+            a += 4 + len
+        }
+        return out
+    }
+
+    private fun info(c: X509Certificate, scheme: String, lineage: List<String> = emptyList()): CertInfo {
         val fp = MessageDigest.getInstance("SHA-256").digest(c.encoded).toHex()
         val bits = when (val k = c.publicKey) {
             is RSAPublicKey -> k.modulus.bitLength()
@@ -124,6 +166,6 @@ object Signing {
             is DSAPublicKey -> k.params.p.bitLength()
             else -> null
         }
-        return CertInfo(c.subjectX500Principal.name, fp, c.notBefore, c.notAfter, bits, scheme)
+        return CertInfo(c.subjectX500Principal.name, fp, c.notBefore, c.notAfter, bits, scheme, lineage)
     }
 }
