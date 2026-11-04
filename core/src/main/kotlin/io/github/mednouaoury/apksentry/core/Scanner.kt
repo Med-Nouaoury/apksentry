@@ -42,7 +42,7 @@ class Scanner(
     private val isCancelled: () -> Boolean = { false },
 ) {
     companion object {
-        const val VERSION = "3.7.1"
+        const val VERSION = "3.7.2"
         private val DEX_RE = Regex("classes\\d*\\.dex")
         private val B64_RE = Regex("[A-Za-z0-9+/=]{80,}")
         private val PATH_RE = Regex("\\.so$|^lib\\w+$|/data/|/sdcard|/storage/|/system/|\\.dex$|\\.apk$|\\.jar$")
@@ -598,10 +598,26 @@ class Scanner(
             }, onString = {})
             if (apis.isNotEmpty()) out("الكود المفكوك يستعمل: " + apis.take(12).joinToString(", "), Tone.MUTED, 2)
         }
+        // الكود المخفي يعرّف خدمة حساسة: تطبيق عادي لا يخفي هذه الخدمات داخل كود مشفّر
+        val sup = HashMap<String, String?>()
+        for (p in r.payloads) {
+            val dex = try { DexFile(p.bytes) } catch (e: Exception) { continue }
+            for (c in 0 until dex.classCount) sup[dex.className(c)] = dex.superName(c)
+        }
+        fun base(cls: String): String? { var c: String? = cls; var g = 0; while (c != null && c in sup && g++ < 32) c = sup[c]; return c }
+        val bases = sup.keys.mapNotNull(::base).toSet()
+        for ((b, w, msg) in HIDDEN_SERVICES) if (b in bases) flag(w, msg)
         r.stops.take(3).forEach { out("توقّفت المحاكاة: $it", Tone.MUTED, 1) }
         r.events.take(3).forEach { out("- $it", Tone.WARN, 1) }
         flag(20, "كان يخفي كوداً مشفّراً ويفكّه وقت التشغيل، وفككناه ($total كلاس)")
     }
+
+    private val HIDDEN_SERVICES = listOf(
+        Triple("Landroid/net/VpnService;", 40, "الكود المخفي فيه خدمة VPN: يستطيع أن يمرّر كل إنترنت هاتفك عبره ويتجسس عليه أو يحوّله"),
+        Triple("Landroid/accessibilityservice/AccessibilityService;", 40, "الكود المخفي فيه خدمة إمكانية الوصول: يستطيع قراءة شاشتك والضغط مكانك"),
+        Triple("Landroid/service/notification/NotificationListenerService;", 30, "الكود المخفي يقرأ إشعاراتك (رموز التحقق والرسائل)"),
+        Triple("Landroid/app/admin/DeviceAdminReceiver;", 30, "الكود المخفي يطلب صلاحية مدير الجهاز (يصعب حذفه)"),
+    )
 
     /** خلاصة بكلام بسيط لمن لا يعرف شيئاً عن الأمن: ماذا يعني هذا لك؟ */
     private fun plainSummary(dangers: List<Finding>, mods: List<Finding>, repack: Boolean, rep: Reputation.Match?, risk: Int): List<Line> {

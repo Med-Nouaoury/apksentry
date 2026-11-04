@@ -76,6 +76,14 @@ class EmuTest {
     }
 
     @Test
+    fun hiddenVpnServiceIsFlagged() {
+        // نمط droppers حقيقيين: الكود المشفّر خدمة VPN تقرأ كل اتصالات الهاتف
+        val r = Scanner(ScanOptions()).scan(ByteArraySource(resource("pack5.apk")), "pack5.apk")
+        assertTrue(r.dangers.any { "خدمة VPN" in it.message }, r.toText())
+        assertTrue(r.riskScore >= 60, "${r.riskScore}")
+    }
+
+    @Test
     fun sandboxCannotEscape() {
         val (emu, rt) = emulator()
         val marker = File("/tmp/apksentry_pwned")

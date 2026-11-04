@@ -24,3 +24,6 @@ bytecode + zlib + `DexClassLoader` reached through reflection. `emu.dex`
 
 `pack4.apk` has **two layers**: XOR-decrypts a second packer (its own
 `Application` class, another key) which then decrypts `synthetic.dex`.
+
+`pack5.apk` is `pack2` with a different hidden payload: a `VpnService` that routes
+all traffic (pattern seen in real droppers on MalwareBazaar).
