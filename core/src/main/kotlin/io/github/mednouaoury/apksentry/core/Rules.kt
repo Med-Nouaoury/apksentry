@@ -31,7 +31,7 @@ object Rules {
 
     val MOD_TOOLS = listOf(
         ModTool("Lde/tu_darmstadt/seemoo/nfcgate/".toByteArray(), 45, Kind.DANGER,
-            "فيه أداة NFCGate: كتنقل بطاقة البنك ديالك عبر NFC لهاتف آخر (أسلوب فيروس NGate)"),
+            "يحتوي أداة NFCGate: تنقل بيانات بطاقتك البنكية عبر NFC إلى هاتف آخر (أسلوب فيروس NGate)"),
         ModTool("Lbin/mt/signature/".toByteArray(), 25, Kind.MOD, "MT Manager: تجاوز فحص التوقيع"),
         ModTool("Lbin/mt/".toByteArray(), 3, Kind.MOD, "MT Manager (أداة تعديل، مثل إضافة الوصول لملفات اللعبة)"),
         ModTool("Lnp/dcc/".toByteArray(), 8, Kind.MOD, "NP Manager: جزء من الكود مُخفى داخل مكتبة native"),

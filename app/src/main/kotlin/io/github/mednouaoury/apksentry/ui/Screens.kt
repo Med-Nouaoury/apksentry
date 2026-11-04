@@ -1,5 +1,6 @@
 package io.github.mednouaoury.apksentry.ui
 
+import android.net.Uri
 import android.content.Context
 import android.content.Intent
 import androidx.activity.compose.BackHandler
@@ -173,6 +174,7 @@ private fun HomeScreen(vm: ScanViewModel, onPick: () -> Unit) {
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
         item { HomeHero(onPick) }
+        if (vm.mbKey.isBlank()) item { IntelSetupCard { showSettings = true } }
         item { Text("ماذا نفحص؟", style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(top = 4.dp)) }
         item {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -295,7 +297,35 @@ private fun SettingsCard(vm: ScanViewModel, open: Boolean, onToggle: () -> Unit)
     }
 }
 
-/** قاعدة البصمات التقريبية: كتخلّي التطبيق يعرف النسخ المعدّلة من الفيروسات المعروفة بلا أنترنت. */
+/**
+ * دليل تفعيل قاعدة الفيروسات. شروط MalwareBazaar لا تسمح لنا بتوزيع بياناتهم داخل التطبيق،
+ * فكل مستخدم يأخذ مفتاحه المجاني بنفسه (دقيقتان).
+ */
+@Composable
+private fun IntelSetupCard(onOpenSettings: () -> Unit) {
+    val ctx = LocalContext.current
+    val warn = StatusColors.warn()
+    SectionCard(title = "فعّل قاعدة الفيروسات المعروفة", icon = AppIcons.Database, accent = warn) {
+        Text(
+            "بدونها يعتمد الفحص على تحليل الكود فقط. معها يتعرّف التطبيق على آلاف الفيروسات المعروفة ونسخها المعدّلة، حتى بدون إنترنت. مجانية وتأخذ دقيقتين:",
+            style = MaterialTheme.typography.bodyMedium,
+        )
+        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Hint("1. افتح موقع abuse.ch وسجّل الدخول بحساب Google أو GitHub")
+            Hint("2. في صفحة حسابك، أنشئ مفتاح API وانسخه")
+            Hint("3. ألصقه في الإعدادات المتقدمة، ثم اضغط \"تحديث\"")
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            FilledTonalButton(onClick = {
+                runCatching { ctx.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://auth.abuse.ch/"))) }
+            }) { Text("افتح abuse.ch") }
+            OutlinedButton(onClick = onOpenSettings) { Text("أدخل المفتاح") }
+        }
+        Hint("نرسل فقط بصمات الملفات، ولا نرسل الملفات نفسها أبداً.")
+    }
+}
+
+/** قاعدة البصمات التقريبية: تجعل التطبيق يتعرّف على النسخ المعدّلة من الفيروسات المعروفة بدون إنترنت. */
 @Composable
 private fun SimilarityDbRow(vm: ScanViewModel) {
     val cs = MaterialTheme.colorScheme
@@ -313,7 +343,7 @@ private fun SimilarityDbRow(vm: ScanViewModel) {
                 if (vm.simBusy) CircularProgressIndicator(Modifier.size(22.dp), strokeWidth = 2.dp)
                 else FilledTonalButton(onClick = vm::updateSimilarityDb, enabled = vm.mbKey.isNotBlank()) { Text("تحديث") }
             }
-            Hint("كتعرف النسخ المعدّلة شوية من فيروسات معروفة، وكتخدم بلا أنترنت. كل تحديث كيزيد آخر 1000 فيروس أندرويد من MalwareBazaar.")
+            Hint("تكشف النسخ المعدّلة قليلاً من فيروسات معروفة، وتعمل بدون إنترنت. كل تحديث يضيف آخر فيروسات أندرويد من MalwareBazaar، ويتم تلقائياً كل أسبوع.")
             vm.simMessage?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = if (it.startsWith("فشل")) StatusColors.bad() else cs.primary) }
         }
     }

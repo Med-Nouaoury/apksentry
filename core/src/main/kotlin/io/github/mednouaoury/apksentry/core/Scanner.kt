@@ -42,7 +42,7 @@ class Scanner(
     private val isCancelled: () -> Boolean = { false },
 ) {
     companion object {
-        const val VERSION = "3.3.0"
+        const val VERSION = "3.4.0"
         private val DEX_RE = Regex("classes\\d*\\.dex")
         private val B64_RE = Regex("[A-Za-z0-9+/=]{80,}")
         private val PATH_RE = Regex("\\.so$|^lib\\w+$|/data/|/sdcard|/storage/|/system/|\\.dex$|\\.apk$|\\.jar$")
@@ -285,8 +285,8 @@ class Scanner(
         // حيل ZIP ضد التحليل: الأندرويد كيتجاهلها، والتطبيقات العادية عمرها ما كتستعملها
         val fakeMethod = zip.entries.filter { it.fakeMethod }
         if (fakeMethod.isNotEmpty()) {
-            out("✘ طريقة ضغط مزيّفة ف ${fakeMethod.size} ملف (${fakeMethod.take(3).joinToString { it.name }}): حيلة باش أدوات الفحص تطيح", Tone.BAD)
-            flag(35, "$name: طريقة ضغط مزيّفة باش يفشّل أدوات الفحص (حيلة كتستعملها الفيروسات)")
+            out("✘ طريقة ضغط مزيّفة في ${fakeMethod.size} ملف (${fakeMethod.take(3).joinToString { it.name }}): حيلة لإفشال أدوات الفحص", Tone.BAD)
+            flag(35, "$name: طريقة ضغط مزيّفة لإفشال أدوات الفحص (حيلة تستعملها الفيروسات)")
         }
         if (zip.entries.any { it.fakeEncrypted }) {
             out("✘ علامة تشفير مزيّفة على ملفات داخل التطبيق: حيلة ضد أدوات الفحص", Tone.BAD)
@@ -386,8 +386,8 @@ class Scanner(
         out("الصلاحيات (${perms.size}):", Tone.HEAD)
         if (perms.size > 150) {
             // أكبر التطبيقات العادية كتطلب عشرات الصلاحيات، ماشي مئات
-            out("✘ ${perms.size} صلاحية! حيلة باش يغرّق أدوات الفحص ويخبّي الصلاحيات الحقيقية", Tone.BAD, 1)
-            flag(40, "كيعلن على ${perms.size} صلاحية (حيلة كتغرّق أدوات الفحص)")
+            out("✘ ${perms.size} صلاحية! حيلة لإغراق أدوات الفحص وإخفاء الصلاحيات الحقيقية", Tone.BAD, 1)
+            flag(40, "يعلن ${perms.size} صلاحية (حيلة لإغراق أدوات الفحص)")
         }
         var risky = 0
         for (p in perms) {
@@ -447,12 +447,12 @@ class Scanner(
         // حروف بعرض صفر وسط الكلمة (ماشي علامات الاتجاه RLM/LRM اللي كتستعملها الترجمات العربية والعبرية عادي)
         val hidden = labels.firstOrNull { l -> l.indices.any { i -> l[i] in ZERO_WIDTH && i > 0 && i < l.length - 1 && l[i - 1].isLetter() } }
         if (hidden != null) {
-            out("✘ سمية التطبيق فيها حروف مخفية (ما كتبانش): حيلة باش يفلت من كشف السميات", Tone.BAD)
-            flag(25, "سمية التطبيق فيها حروف مخفية باش يفلت من الكشف")
+            out("✘ اسم التطبيق فيه حروف مخفية لا تظهر: حيلة للإفلات من كشف الأسماء", Tone.BAD)
+            flag(25, "اسم التطبيق فيه حروف مخفية للإفلات من الكشف")
         }
         if (pkg.isEmpty()) return
         Impersonation.APPS.firstOrNull { pkg in it.packages }?.let {
-            out("هذه حزمة تطبيق ${it.name} الرسمية: التوقيع هو اللي كيبيّن واش النسخة من الشركة", Tone.INFO)
+            out("هذه حزمة تطبيق ${it.name} الرسمية: التوقيع هو الذي يحدد هل النسخة من الشركة", Tone.INFO)
             return
         }
         val raw = Impersonation.check(labels, pkg) ?: return
@@ -465,16 +465,16 @@ class Scanner(
         out("انتحال الهوية:", Tone.HEAD)
         when (hit.strength) {
             ImpStrength.STRONG -> {
-                out("✘ ${hit.reason}، ولكن الحزمة $pkg ماشي الحزمة الرسمية ($official)", Tone.BAD, 1)
+                out("✘ ${hit.reason}، لكن الحزمة $pkg ليست الحزمة الرسمية ($official)", Tone.BAD, 1)
                 flag(30, "ينتحل هوية ${hit.app.name}: ${hit.reason}، والحزمة ليست الرسمية")
             }
             ImpStrength.WEAK -> {
-                out("⚠ ${hit.reason}، والحزمة ماشي ديال الشركة ($official). قد يكون تطبيقاً مستقلاً أو نسخة معدّلة", Tone.WARN, 1)
+                out("⚠ ${hit.reason}، والحزمة ليست حزمة الشركة ($official). قد يكون تطبيقاً مستقلاً أو نسخة معدّلة", Tone.WARN, 1)
                 notes.add("يستعمل اسم ${hit.app.name} وهو ليس التطبيق الرسمي")
             }
         }
         if (danger.isNotEmpty()) {
-            out("✘ ويطلب: ${danger.joinToString("، ")}. هادي هي طريقة الفيروسات البنكية", Tone.BAD, 1)
+            out("✘ ويطلب: ${danger.joinToString("، ")}. هذا هو أسلوب الفيروسات البنكية", Tone.BAD, 1)
             val title = "يستعمل اسم ${hit.app.name} ويطلب صلاحيات خطيرة (${danger.joinToString("، ")})"
             flag(35, "سلوك: $title")
             behaviors.add(Finding(35, title, Kind.DANGER))
@@ -530,7 +530,7 @@ class Scanner(
                         out("⚠ $label يشبه فيروساً معروفاً من عائلة ${m.entry.family} (المسافة ${m.distance})", Tone.WARN, 1)
                         flag(30, "$label يشبه فيروساً معروفاً (${m.entry.family})، المسافة ${m.distance}")
                     }
-                    top -> out("مقارنة مع ${db.size} فيروس معروف: لا يشبه أي واحد ✔ (أقرب مسافة ${m.distance})", Tone.OK, 1)
+                    top -> out("قارنّاه مع ${db.size} فيروس معروف: لا يشبه أياً منها ✔ (أقرب مسافة ${m.distance})", Tone.OK, 1)
                 }
             }
         }
@@ -691,8 +691,8 @@ class Scanner(
                     "Ldalvik/system/PathClassLoader;-><init>", "Ldalvik/system/DexFile;->loadDex").any { it in facts.apis }
                 if (loader && protectorsFound.isEmpty()) {
                     // حماية تجارية معروفة كنعرفوها بالسمية؛ هادي حماية مجهولة كتفك كود مشفّر وتشغّلو ف الذاكرة
-                    out("✘ وكيفك هاد الملف ويشغّلو ككود، بأداة حماية مجهولة (ماشي شركة معروفة)", Tone.BAD, 1)
-                    flag(30, "كيخبّي الكود الحقيقي مشفّر ف ${e.name} وكيشغّلو ف الذاكرة (dropper/packer مجهول)")
+                    out("✘ ويفك هذا الملف ويشغّله ككود، بأداة حماية مجهولة (ليست من شركة معروفة)", Tone.BAD, 1)
+                    flag(30, "يخفي الكود الحقيقي مشفّراً في ${e.name} ويشغّله في الذاكرة (dropper/packer مجهول)")
                 }
                 return
             }
@@ -1067,7 +1067,7 @@ class Scanner(
         }
 
         val rep = if (opts.reputation && pkg != null) Reputation.lookup(pkg, fingerprints) else null
-        if (rep != null) first.lines.add(Line("✔ نفس النسخة اللي كيوزّع ${rep.source} بالضبط (مبنية من الكود المصدري ومراجَعة)", Tone.OK))
+        if (rep != null) first.lines.add(Line("✔ نفس النسخة التي يوزّعها ${rep.source} بالضبط (مبنية من الكود المصدري ومراجَعة)", Tone.OK))
 
         if (bytes.ips.isNotEmpty()) flag(10, "عناوين IP مكتوبة مباشرة في الكود: ${bytes.ips.take(10).joinToString(", ")}")
         for (w in bytes.minerHits) flag(40, "آثار برنامج تعدين عملات رقمية في $w")
@@ -1106,7 +1106,7 @@ class Scanner(
             for (f in soft) findings[f.message] = Finding(f.weight, f.message, Kind.INFO)
             behaviors.removeAll { b -> soft.any { it.message.endsWith(b.message) } }
             if (soft.isNotEmpty())
-                notes.add("لقينا ${soft.size} قدرات قوية (التفاصيل ف الأقسام)، ولكن ما حسبناهاش خطر حيت هادي النسخة الرسمية ديال ${rep.source}")
+                notes.add("وجدنا ${soft.size} قدرات قوية (التفاصيل في الأقسام)، لكن لم نحسبها خطراً لأن هذه النسخة الرسمية من ${rep.source}")
         }
 
         val order = compareByDescending<Finding> { it.weight }.thenByDescending { it.message }
@@ -1129,7 +1129,7 @@ class Scanner(
         if (vulns.any { it.severity >= 3 })
             advice.add("التطبيق فيه ثغرات أمنية عالية: لا تستعمله على شبكات Wi-Fi عامة، ولا تدخل فيه بيانات حساسة.")
         if (mb != null && opts.similarity.size == 0)
-            advice.add("حدّث قاعدة البصمات التقريبية من الإعدادات، باش نكشفو النسخ المعدّلة من الفيروسات المعروفة حتى بلا أنترنت.")
+            advice.add("حدّث قاعدة البصمات التقريبية من الإعدادات، لكشف النسخ المعدّلة من الفيروسات المعروفة حتى بدون إنترنت.")
         if (vt == null && mb == null)
             advice.add("لمقارنة الملف بقواعد بيانات الفيروسات المعروفة، أضف مفتاح MalwareBazaar أو VirusTotal في الإعدادات.")
 

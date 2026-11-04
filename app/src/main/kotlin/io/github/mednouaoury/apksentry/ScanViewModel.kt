@@ -64,6 +64,11 @@ class ScanViewModel(app: Application) : AndroidViewModel(app) {
     var simMessage by mutableStateOf<String?>(null)
         private set
 
+    init {
+        // تحديث تلقائي كل أسبوع (إذا كان المفتاح موجوداً)
+        if (mbKey.isNotBlank() && System.currentTimeMillis() - simUpdatedAt > 7L * 24 * 3600 * 1000) updateSimilarityDb()
+    }
+
     private fun loadSimDb(): SimilarityDb {
         simDb?.let { return it }
         val db = try {
