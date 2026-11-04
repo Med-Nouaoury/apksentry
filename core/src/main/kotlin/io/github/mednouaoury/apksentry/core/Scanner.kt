@@ -697,7 +697,7 @@ class Scanner(
         }
         if (hiddenPayload)
             s.add(Line("كان يخفي كوده الحقيقي مشفّراً. فككناه وفحصناه، والنتيجة أعلاه تشمله.", Tone.BAD))
-        else if (hidingTool || addedNativeLib || packedDex)
+        else if ((hidingTool || addedNativeLib || packedDex) && s.none { it.text.contains("جزءاً منه مخفي") })
             s.add(Line("جزء من الكود مخفي أو مشفّر، فلا يمكن فحصه بالكامل.", Tone.WARN))
         val sensitive = facts.perms.count { it in Rules.RISKY_PERMS } + Rules.DANGER_BINDS.keys.count { b -> facts.manifestValues.any { it.contains(b) } }
         if (sensitive > 0) s.add(Line("يطلب ${count(sensitive, "صلاحية حساسة واحدة", "صلاحيتين حساستين", "صلاحيات حساسة", "صلاحية حساسة")} (تجدها في الأسفل مع شرح كل واحدة).", Tone.INFO))
