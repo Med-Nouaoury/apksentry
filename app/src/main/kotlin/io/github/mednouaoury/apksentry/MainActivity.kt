@@ -20,6 +20,11 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        // إذا كانت هناك تطبيقات محظورة والجدار متوقف (مثلاً قتله النظام)، نعيد تشغيله
+        io.github.mednouaoury.apksentry.net.Firewall.load(this)
+        if (savedInstanceState == null && io.github.mednouaoury.apksentry.net.Firewall.blocked.value.isNotEmpty() &&
+            !io.github.mednouaoury.apksentry.net.Firewall.running.value && io.github.mednouaoury.apksentry.net.Firewall.canStartSilently(this)
+        ) runCatching { io.github.mednouaoury.apksentry.net.NetMonitorService.refresh(this) }
         if (savedInstanceState == null) handleIntent(intent)
         addOnNewIntentListener { handleIntent(it) }
         setContent {

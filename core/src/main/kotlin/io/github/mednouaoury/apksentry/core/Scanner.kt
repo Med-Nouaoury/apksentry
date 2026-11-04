@@ -42,7 +42,7 @@ class Scanner(
     private val isCancelled: () -> Boolean = { false },
 ) {
     companion object {
-        const val VERSION = "3.6.0"
+        const val VERSION = "3.7.0"
         private val DEX_RE = Regex("classes\\d*\\.dex")
         private val B64_RE = Regex("[A-Za-z0-9+/=]{80,}")
         private val PATH_RE = Regex("\\.so$|^lib\\w+$|/data/|/sdcard|/storage/|/system/|\\.dex$|\\.apk$|\\.jar$")
@@ -639,8 +639,8 @@ class Scanner(
     private fun actionFor(level: RiskLevel, repack: Boolean, behaves: Boolean): String = when (level) {
         RiskLevel.HIGH -> "لا تثبّته."
         RiskLevel.MEDIUM -> if (behaves) "لا تثبّته إلا إذا كنت تعرف المطوّر وتثق به." else "انتبه: راجع النقاط أدناه قبل أن تقرّر."
-        RiskLevel.LOW_MEDIUM -> if (repack) "يمكن تثبيته بحذر: اقطع عنه الإنترنت من تبويب المراقبة، ولا تسجّل فيه بحساب مهم." else "يمكن تثبيته بحذر."
-        RiskLevel.LOW -> if (repack) "يمكن تثبيته بحذر: هذه نسخة معدّلة، فاقطع عنها الإنترنت من تبويب المراقبة ولا تسجّل فيها بحساب مهم."
+        RiskLevel.LOW_MEDIUM -> if (repack) "يمكن تثبيته بحذر: اقطع عنه الإنترنت، ولا تسجّل فيه بحساب مهم." else "يمكن تثبيته بحذر."
+        RiskLevel.LOW -> if (repack) "يمكن تثبيته بحذر: هذه نسخة معدّلة، فاقطع عنها الإنترنت ولا تسجّل فيها بحساب مهم."
             else "لم نجد ما يمنع تثبيته. راقب اتصالاته في أول تشغيل."
     }
 

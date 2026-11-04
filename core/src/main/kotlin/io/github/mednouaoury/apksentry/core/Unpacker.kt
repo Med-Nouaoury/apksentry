@@ -18,6 +18,13 @@ object Unpacker {
         "Ldalvik/system/BaseDexClassLoader;-><init>", "Ldalvik/system/DelegateLastClassLoader;-><init>",
     )
 
+    /** كلاسات يشغّلها الأندرويد بنفسه عند بداية التطبيق. */
+    private val STAGE_BASES = listOf("Landroid/app/Application;", "Landroid/app/AppComponentFactory;", "Landroid/content/ContextWrapper;")
+
+    /** وظائف تدل أن الكلاس يفك شيئاً. */
+    private val DECRYPT_HINTS = setOf("Ljavax/crypto/Cipher;->doFinal", "Ljava/util/zip/Inflater;->inflate",
+        "Landroid/content/res/AssetManager;->open", "Landroid/util/Base64;->decode")
+
     fun run(
         zip: ZipArchive,
         apkBytes: ByteArray?,
@@ -35,8 +42,10 @@ object Unpacker {
         rt.emu = emu
         val stops = ArrayList<String>()
 
+        // كل طبقة تتوقف حين تفك شيئاً جديداً؛ الطبقة التالية تكمل من هناك
+        var until = 0
         fun attempt(label: String, block: () -> Unit) {
-            if (rt.captured.isNotEmpty()) return
+            if (rt.captured.size > until) return
             checkCancel()
             try {
                 block()
@@ -63,9 +72,7 @@ object Unpacker {
             return "L" + full.replace('.', '/') + ";"
         }
 
-        // 1) كلاس التطبيق: attachBaseContext ثم onCreate (هنا تفك أغلب الأغلفة كودها)
-        val app = desc(appClass)
-        if (app != null && emu.isApp(app)) {
+        fun runApplication(app: String) {
             var obj: EObj? = null
             attempt("<clinit>") { emu.ensureInit(app) }
             attempt("<init>") {
@@ -79,6 +86,25 @@ object Unpacker {
             }
             attempt("onCreate") { emu.dispatch(app, "onCreate", emptyList(), "V", listOf(self), virtual = true) }
         }
+
+        fun runMethod(m: AppMethod) {
+            attempt("${m.cls.substringAfterLast('/').trimEnd(';')}.${m.name}") {
+                val args = ArrayList<Any?>()
+                if (!m.isStatic) args.add(EObj(m.cls))
+                for (p in m.params) args.add(when {
+                    p in EmuRuntime.CONTEXT_TYPES || p == "Landroid/app/Application;" -> ContextStub()
+                    p == "Ljava/lang/String;" -> ""
+                    p == "Ljava/lang/ClassLoader;" -> ClassLoaderStub("parent")
+                    else -> DalvikEmulator.defaultOf(p)
+                })
+                emu.ensureInit(m.cls)
+                emu.invoke(m, args)
+            }
+        }
+
+        // 1) كلاس التطبيق: attachBaseContext ثم onCreate (هنا تفك أغلب الأغلفة كودها)
+        val app = desc(appClass)
+        if (app != null && emu.isApp(app)) runApplication(app)
 
         // 2) AppComponentFactory (تستعمله بعض الأغلفة الحديثة)
         val factory = desc(factoryClass)
@@ -105,17 +131,29 @@ object Unpacker {
             }
             for (m in targets.take(24)) {
                 if (rt.captured.isNotEmpty()) break
-                attempt("${m.cls.substringAfterLast('/').trimEnd(';')}.${m.name}") {
-                    val args = ArrayList<Any?>()
-                    if (!m.isStatic) args.add(EObj(m.cls))
-                    for (p in m.params) args.add(when {
-                        p in EmuRuntime.CONTEXT_TYPES || p == "Landroid/app/Application;" -> ContextStub()
-                        p == "Ljava/lang/String;" -> ""
-                        p == "Ljava/lang/ClassLoader;" -> ClassLoaderStub("parent")
-                        else -> DalvikEmulator.defaultOf(p)
-                    })
-                    emu.ensureInit(m.cls)
-                    emu.invoke(m, args)
+                runMethod(m)
+            }
+        }
+
+        // 4) طبقات متعددة: الكود المفكوك قد يكون غلافاً آخر. الأندرويد كان سيشغّل كلاس التطبيق الحقيقي
+        //    الموجود فيه، فنشغّله نحن أيضاً، ونكرر حتى 3 طبقات.
+        var stage = 0
+        var done = 0
+        while (rt.captured.size > done && stage < 3) {
+            val fresh = rt.captured.subList(done, rt.captured.size).toList()
+            done = rt.captured.size
+            until = done
+            stage++
+            for (p in fresh) {
+                val dex = try { DexFile(p.bytes) } catch (e: Exception) { continue }
+                for (c in 0 until dex.classCount) {
+                    if (rt.captured.size > until) break
+                    val cls = dex.className(c)
+                    val ac = emu.classes[cls] ?: continue
+                    if (STAGE_BASES.any { emu.extends(cls, it) }) { runApplication(cls); continue }
+                    var loads = false
+                    dex.scanClass(c, onInvoke = { mi -> if (dex.methodFull(mi) in LOADERS || dex.methodFull(mi) in DECRYPT_HINTS) loads = true }, onString = {})
+                    if (loads) ac.methods.values.filter { it.codeOff != 0 && it.name != "<clinit>" }.take(8).forEach(::runMethod)
                 }
             }
         }

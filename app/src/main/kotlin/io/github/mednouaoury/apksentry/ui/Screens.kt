@@ -1,5 +1,8 @@
 package io.github.mednouaoury.apksentry.ui
 
+import io.github.mednouaoury.apksentry.net.Firewall
+import android.net.VpnService
+import android.app.Activity
 import android.net.Uri
 import android.content.Context
 import android.content.Intent
@@ -480,21 +483,18 @@ private fun ResultScreen(r: ScanResult, vm: ScanViewModel, onNew: () -> Unit) {
     val info = StatusColors.info()
     val dangers = if (r.behaviors.isNotEmpty()) r.dangers.filterNot { it.message.startsWith("سلوك: ") } else r.dangers
 
+    var showDetails by rememberSaveable { mutableStateOf(false) }
+    val muted = MaterialTheme.colorScheme.onSurfaceVariant
+
     LazyColumn(
         Modifier.fillMaxSize(),
         contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 4.dp, bottom = 24.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
+        // ---- ما يحتاجه كل مستخدم ----
         item { VerdictHero(r) }
         item { SummaryCard(r, levelColor(r.level)) }
-        item {
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                StatTile("${r.behaviors.size}", "سلوك خبيث", if (r.behaviors.isEmpty()) ok else bad, Modifier.weight(1f))
-                StatTile("${r.vulns.size}", "ثغرات", if (r.vulns.any { it.severity >= 3 }) bad else if (r.vulns.isNotEmpty()) warn else ok, Modifier.weight(1f))
-                StatTile("${r.secrets.size}", "أسرار", if (r.secrets.any { it.suspicious }) bad else if (r.secrets.isNotEmpty()) warn else ok, Modifier.weight(1f))
-                StatTile("${r.unusualDomains.size}", "مواقع غريبة", if (r.unusualDomains.isNotEmpty()) warn else ok, Modifier.weight(1f))
-            }
-        }
+        r.packageName?.let { pkg -> item { BlockInternetCard(pkg, r.appLabel ?: pkg) } }
         item {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 val pad = PaddingValues(horizontal = 6.dp, vertical = 10.dp)
@@ -511,83 +511,107 @@ private fun ResultScreen(r: ScanResult, vm: ScanViewModel, onNew: () -> Unit) {
             }
         }
         item { PermissionsCard(r.permissions) }
+
+        // ---- للمهتمين فقط ----
         item {
-            Column(Modifier.padding(top = 6.dp)) {
-                Text("التفاصيل", style = MaterialTheme.typography.titleMedium)
-                Hint("الأسباب التي بنينا عليها الحكم. الأرقام الصغيرة بجانب كل سطر هي وزنه في درجة الخطر.")
-            }
-        }
-        if (r.behaviors.isNotEmpty()) item {
-            SectionCard("سلوكيات تشبه برامج خبيثة معروفة", AppIcons.Bug, bad) {
-                r.behaviors.forEach { FindingLine(it.message, bad, badge = "${it.weight}") }
-            }
-        }
-        item {
-            SectionCard("علامات الخطر", AppIcons.Shield, if (dangers.isEmpty()) ok else bad) {
-                if (dangers.isEmpty()) Text("لا شيء ✔", color = ok)
-                dangers.forEach { FindingLine(it.message, if (it.weight >= 15) bad else warn, badge = "${it.weight}") }
-            }
-        }
-        item {
-            SectionCard("علامات التعديل", AppIcons.Code, if (r.mods.isEmpty()) ok else warn) {
-                if (r.mods.isEmpty()) Text("لا شيء، يبدو أصلياً ✔", color = ok)
-                else Hint("التعديل ليس خطراً بحد ذاته، لكنه يعني أن التطبيق ليس كما نشره المطور.")
-                r.mods.forEach { FindingLine(it.message, warn, badge = "${it.weight}") }
-            }
-        }
-        if (r.vulns.isNotEmpty()) item {
-            SectionCard("ثغرات في التطبيق نفسه", AppIcons.Block, if (r.vulns.any { it.severity >= 3 }) bad else warn) {
-                Hint("أخطاء أمنية تجعل التطبيق سهل الاختراق، وليست سلوكاً خبيثاً. لا تدخل في درجة الخطر.")
-                r.vulns.forEach { v ->
-                    val (label, c) = when (v.severity) { 3 -> "عالية" to bad; 2 -> "متوسطة" to warn; else -> "منخفضة" to info }
-                    FindingLine(v.title, c, badge = label, sub = v.where.ifEmpty { null })
+            Surface(
+                Modifier.fillMaxWidth().clickable { showDetails = !showDetails },
+                shape = MaterialTheme.shapes.large, color = MaterialTheme.colorScheme.surfaceContainerLow,
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+            ) {
+                Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    IconBadge(AppIcons.Code, MaterialTheme.colorScheme.primary, 36.dp)
+                    Column(Modifier.weight(1f)) {
+                        Text(if (showDetails) "إخفاء التفاصيل" else "عرض التفاصيل", style = MaterialTheme.typography.titleSmall)
+                        Hint("الأسباب التقنية للحكم: علامات الخطر، التعديل، الثغرات، المواقع")
+                    }
+                    Icon(Icons.Filled.KeyboardArrowDown, null, Modifier.rotate(if (showDetails) 180f else 0f))
                 }
             }
         }
-        if (r.secrets.isNotEmpty()) item {
-            SectionCard("أسرار مكتوبة داخل التطبيق", AppIcons.Key, if (r.secrets.any { it.suspicious }) bad else warn) {
-                r.secrets.forEach { FindingLine(it.kind, if (it.suspicious) bad else warn, sub = it.masked) }
+        if (showDetails) {
+            item {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    StatTile("${r.behaviors.size}", "سلوك خبيث", if (r.behaviors.isEmpty()) ok else bad, Modifier.weight(1f))
+                    StatTile("${r.vulns.size}", "ثغرات", muted, Modifier.weight(1f))
+                    StatTile("${r.secrets.size}", "أسرار", if (r.secrets.any { it.suspicious }) bad else muted, Modifier.weight(1f))
+                    StatTile("${r.unusualDomains.size}", "مواقع", muted, Modifier.weight(1f))
+                }
             }
-        }
-        if (r.advice.isNotEmpty()) item {
-            SectionCard("نصائح", AppIcons.Verified, info) {
-                r.advice.forEach { FindingLine(it, info) }
+            item { Hint("الأرقام الصغيرة بجانب كل سطر هي وزنه في درجة الخطر.") }
+            if (r.behaviors.isNotEmpty()) item {
+                SectionCard("سلوكيات تشبه برامج خبيثة معروفة", AppIcons.Bug, bad) {
+                    r.behaviors.forEach { FindingLine(it.message, bad, badge = "${it.weight}") }
+                }
             }
-        }
-        if (r.unusualDomains.isNotEmpty()) item {
-            SectionCard("مواقع غير مألوفة في الكود", AppIcons.Globe, warn, trailing = { Pill("${r.unusualDomains.size}", warn) }) {
-                SelectionContainer {
-                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                        r.unusualDomains.take(40).forEach { d ->
-                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                Dot(warn, 6.dp); Text(d, style = MaterialTheme.typography.bodyMedium, fontFamily = FontFamily.Monospace)
+            item {
+                SectionCard("علامات الخطر", AppIcons.Shield, if (dangers.isEmpty()) ok else bad) {
+                    if (dangers.isEmpty()) Text("لا شيء ✔", color = ok)
+                    dangers.forEach { FindingLine(it.message, if (it.weight >= 15) bad else warn, badge = "${it.weight}") }
+                }
+            }
+            item {
+                SectionCard("علامات التعديل", AppIcons.Code, if (r.mods.isEmpty()) ok else warn) {
+                    if (r.mods.isEmpty()) Text("لا شيء، يبدو أصلياً ✔", color = ok)
+                    else Hint("التعديل ليس خطراً بحد ذاته، لكنه يعني أن التطبيق ليس كما نشره المطور.")
+                    r.mods.forEach { FindingLine(it.message, warn, badge = "${it.weight}") }
+                }
+            }
+            if (r.vulns.isNotEmpty()) item {
+                SectionCard("أخطاء أمنية في برمجة التطبيق", AppIcons.Block, muted) {
+                    Hint("أخطاء ارتكبها المطوّر نفسه، وليست سلوكاً خبيثاً، ولا تدخل في درجة الخطر. تهمّك فقط إذا أدخلت فيه بيانات حساسة على شبكة Wi-Fi عامة.")
+                    r.vulns.forEach { v ->
+                        val (label, c) = when (v.severity) { 3 -> "عالية" to warn; 2 -> "متوسطة" to info; else -> "منخفضة" to muted }
+                        FindingLine(v.title, c, badge = label, sub = v.where.ifEmpty { null })
+                    }
+                }
+            }
+            if (r.secrets.isNotEmpty()) item {
+                SectionCard("أسرار مكتوبة داخل التطبيق", AppIcons.Key, if (r.secrets.any { it.suspicious }) bad else warn) {
+                    r.secrets.forEach { FindingLine(it.kind, if (it.suspicious) bad else warn, sub = it.masked) }
+                }
+            }
+            if (r.unusualDomains.isNotEmpty()) item {
+                SectionCard("مواقع مذكورة في الكود", AppIcons.Globe, muted, trailing = { Pill("${r.unusualDomains.size}", muted) }) {
+                    Hint("أغلبها عادية (مكتبات الإعلانات والإحصاء). ما يهم هو ما يتصل به فعلاً: راقبه من تبويب المراقبة.")
+                    SelectionContainer {
+                        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            r.unusualDomains.take(40).forEach { d ->
+                                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    Dot(muted, 6.dp); Text(d, style = MaterialTheme.typography.bodyMedium, fontFamily = FontFamily.Monospace)
+                                }
                             }
                         }
                     }
                 }
             }
-        }
-        if (r.packageName != null && r.signers.isNotEmpty()) item {
-            SectionCard("التوقيع الرسمي", AppIcons.Verified, if (trusted) ok else MaterialTheme.colorScheme.primary) {
-                if (trusted) Text("هذا التوقيع محفوظ في قائمتك الموثوقة ✔", color = ok)
-                else {
-                    Hint("إذا كان هذا الملف من مصدر رسمي (المطور أو Google Play)، احفظ توقيعه. أي نسخة لاحقة بتوقيع مختلف ستُكشف.")
-                    FilledTonalButton(onClick = { vm.trustSigner(r); trusted = true }, shape = MaterialTheme.shapes.medium) {
-                        Text("هذا ملف رسمي: احفظ توقيعه")
+            if (r.advice.isNotEmpty()) item {
+                SectionCard("نصائح إضافية", AppIcons.Verified, info) {
+                    r.advice.forEach { FindingLine(it, info) }
+                }
+            }
+            if (r.packageName != null && r.signers.isNotEmpty()) item {
+                SectionCard("التوقيع الرسمي", AppIcons.Verified, if (trusted) ok else MaterialTheme.colorScheme.primary) {
+                    if (trusted) Text("هذا التوقيع محفوظ في قائمتك الموثوقة ✔", color = ok)
+                    else {
+                        Hint("إذا كان هذا الملف من مصدر رسمي (المطور أو Google Play)، احفظ توقيعه. أي نسخة لاحقة بتوقيع مختلف ستُكشف.")
+                        FilledTonalButton(onClick = { vm.trustSigner(r); trusted = true }, shape = MaterialTheme.shapes.medium) {
+                            Text("هذا ملف رسمي: احفظ توقيعه")
+                        }
                     }
                 }
             }
-        }
-        if (r.notes.isNotEmpty()) item {
-            SectionCard("ملاحظات", AppIcons.File, MaterialTheme.colorScheme.onSurfaceVariant) {
-                r.notes.forEach { Hint("• $it") }
+            if (r.notes.isNotEmpty()) item {
+                SectionCard("ملاحظات", AppIcons.File, muted) {
+                    r.notes.forEach { Hint("• $it") }
+                }
             }
-        }
-        item {
-            Text("التفاصيل التقنية", style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(top = 6.dp))
-        }
-        itemsIndexed(r.sections) { i, sec ->
-            DetailCard(sec, expanded[i] == true) { expanded[i] = expanded[i] != true }
+            item {
+                Text("التقرير الكامل", style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(top = 6.dp))
+            }
+            itemsIndexed(r.sections) { i, sec ->
+                DetailCard(sec, expanded[i] == true) { expanded[i] = expanded[i] != true }
+            }
         }
         item {
             Text(
@@ -595,6 +619,35 @@ private fun ResultScreen(r: ScanResult, vm: ScanViewModel, onNew: () -> Unit) {
                 style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
                 textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth(),
             )
+        }
+    }
+}
+
+/** إذا كان التطبيق مثبتاً على الهاتف: قطع الإنترنت عنه بضغطة (دائم). */
+@Composable
+private fun BlockInternetCard(pkg: String, label: String) {
+    val ctx = LocalContext.current
+    val installed = remember(pkg) { runCatching { ctx.packageManager.getApplicationInfo(pkg, 0); true }.getOrDefault(false) }
+    if (!installed || pkg == ctx.packageName) return
+    LaunchedEffect(Unit) { Firewall.load(ctx) }
+    val blocked by Firewall.blocked.collectAsStateWithLifecycle()
+    val isBlocked = pkg in blocked
+    val consent = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { res ->
+        if (res.resultCode == Activity.RESULT_OK) Firewall.block(ctx, pkg)
+    }
+    val c = if (isBlocked) StatusColors.ok() else MaterialTheme.colorScheme.primary
+    Surface(shape = MaterialTheme.shapes.large, color = c.copy(alpha = 0.10f), border = BorderStroke(1.dp, c.copy(alpha = 0.4f))) {
+        Row(Modifier.fillMaxWidth().padding(14.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            IconBadge(AppIcons.Block, c, 40.dp)
+            Column(Modifier.weight(1f)) {
+                Text(if (isBlocked) "الإنترنت مقطوع عن $label" else "$label مثبّت على هاتفك", style = MaterialTheme.typography.titleSmall)
+                Hint(if (isBlocked) "يبقى مقطوعاً حتى بعد الخروج وإعادة تشغيل الهاتف." else "اقطع عنه الإنترنت: يبقى يعمل، لكنه لا يستطيع إرسال أي شيء.")
+            }
+            if (isBlocked) OutlinedButton(onClick = { Firewall.unblock(ctx, pkg) }, shape = MaterialTheme.shapes.medium) { Text("أرجع") }
+            else Button(onClick = {
+                val prep = VpnService.prepare(ctx)
+                if (prep == null) Firewall.block(ctx, pkg) else consent.launch(prep)
+            }, shape = MaterialTheme.shapes.medium) { Text("اقطع") }
         }
     }
 }

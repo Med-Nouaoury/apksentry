@@ -21,3 +21,6 @@ through `resources.arsc`, wrong package, plus SMS/accessibility permissions).
 with a Base64 key + `InMemoryDexClassLoader`, and RC4 implemented in the app's own
 bytecode + zlib + `DexClassLoader` reached through reflection. `emu.dex`
 (from `smali-emu/`) checks interpreter arithmetic and sandbox escape attempts.
+
+`pack4.apk` has **two layers**: XOR-decrypts a second packer (its own
+`Application` class, another key) which then decrypts `synthetic.dex`.

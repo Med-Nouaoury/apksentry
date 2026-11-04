@@ -16,7 +16,10 @@ class DnsQuery(
 }
 
 /** اتصال مباشر (بدون DNS) رأيناه في وضع المنع الكامل. */
-class RawConnection(val dstIp: String, val dstPort: Int, val protocol: String)
+class RawConnection(val dstIp: String, val dstPort: Int, val protocol: String, val srcIp: String = "", val srcPort: Int = 0) {
+    /** 6 = TCP، 17 = UDP (لمعرفة التطبيق صاحب الاتصال). */
+    val protoNumber get() = if (protocol == "TCP") 6 else 17
+}
 
 /**
  * التعامل مع حزم الشبكة الخام التي تمر عبر VPN:
@@ -48,14 +51,14 @@ object DnsPackets {
                 if (len < ihl + 4 || (proto != 6 && proto != 17)) return null
                 // نسجّل فقط بداية اتصال TCP (SYN) حتى لا نكرر نفس الاتصال
                 if (proto == 6 && (len < ihl + 14 || pkt[ihl + 13].toInt() and 0x02 == 0)) return null
-                RawConnection(ipv4(pkt, 16), pkt.u16be(ihl + 2), if (proto == 6) "TCP" else "UDP")
+                RawConnection(ipv4(pkt, 16), pkt.u16be(ihl + 2), if (proto == 6) "TCP" else "UDP", ipv4(pkt, 12), pkt.u16be(ihl))
             }
             6 -> {
                 if (len < 44) return null
                 val next = pkt[6].toInt() and 0xff
                 if (next != 6 && next != 17) return null
                 if (next == 6 && (len < 54 || pkt[40 + 13].toInt() and 0x02 == 0)) return null
-                RawConnection(ipv6(pkt, 24), pkt.u16be(42), if (next == 6) "TCP" else "UDP")
+                RawConnection(ipv6(pkt, 24), pkt.u16be(42), if (next == 6) "TCP" else "UDP", ipv6(pkt, 8), pkt.u16be(40))
             }
             else -> null
         }

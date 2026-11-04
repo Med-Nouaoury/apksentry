@@ -65,6 +65,17 @@ class EmuTest {
     }
 
     @Test
+    fun unpacksTwoLayers() {
+        val bytes = resource("pack4.apk")
+        val zip = ZipArchive(ByteArraySource(bytes))
+        val dexes = listOf(DexFile(zip.readBytes(zip.entry("classes.dex")!!)))
+        val r = Unpacker.run(zip, bytes, dexes, "com.pack4", "com.pack4.App", null)
+        // الطبقة الأولى تفك غلافاً ثانياً (بكلاس Application خاص به ومفتاح آخر)، وهو يفك الكود الحقيقي
+        assertTrue(r.payloads.size >= 2, "${r.payloads.map { it.source }} ${r.stops}")
+        assertTrue(r.payloads.any { sha(it.bytes) == sha(resource("synthetic.dex")) }, r.stops.toString())
+    }
+
+    @Test
     fun sandboxCannotEscape() {
         val (emu, rt) = emulator()
         val marker = File("/tmp/apksentry_pwned")

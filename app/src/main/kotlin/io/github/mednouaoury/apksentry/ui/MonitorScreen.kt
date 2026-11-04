@@ -69,6 +69,7 @@ import androidx.core.graphics.drawable.toBitmap
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import io.github.mednouaoury.apksentry.core.DomainKind
 import io.github.mednouaoury.apksentry.net.ConnEvent
+import io.github.mednouaoury.apksentry.net.Firewall
 import io.github.mednouaoury.apksentry.net.MonitorMode
 import io.github.mednouaoury.apksentry.net.MonitorSession
 import io.github.mednouaoury.apksentry.net.NetMonitor
@@ -133,12 +134,13 @@ private fun MonitorSetup() {
                 }
             }
         }
+        item { FirewallCard() }
         privateDnsWarning(ctx)?.let { w -> item { FindingLine(w, StatusColors.warn()) } }
         error?.let { e -> item { FindingLine(e, StatusColors.bad()) } }
         item {
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 ModeCard(AppIcons.Wifi, "مراقبة", "التطبيق يعمل عادي ونسجّل اتصالاته", mode == MonitorMode.WATCH, Modifier.weight(1f)) { mode = MonitorMode.WATCH }
-                ModeCard(AppIcons.Block, "قطع الإنترنت", "نمنع كل اتصالاته ونسجّل محاولاته", mode == MonitorMode.BLOCK_ALL, Modifier.weight(1f)) { mode = MonitorMode.BLOCK_ALL }
+                ModeCard(AppIcons.Block, "قطع الإنترنت", "دائم: يبقى حتى بعد الخروج وإعادة تشغيل الهاتف", mode == MonitorMode.BLOCK_ALL, Modifier.weight(1f)) { mode = MonitorMode.BLOCK_ALL }
             }
         }
         item {
@@ -153,6 +155,65 @@ private fun MonitorSetup() {
         else items(filtered, key = { it.pkg }) { app ->
             AppRow(app, selected == app.pkg, onSelect = { selected = app.pkg }, onStart = { start(app) })
         }
+    }
+}
+
+/** التطبيقات المقطوع عنها الإنترنت (محفوظة دائماً). */
+@Composable
+private fun FirewallCard() {
+    val ctx = LocalContext.current
+    val cs = MaterialTheme.colorScheme
+    LaunchedEffect(Unit) { Firewall.load(ctx) }
+    val blocked by Firewall.blocked.collectAsStateWithLifecycle()
+    val running by Firewall.running.collectAsStateWithLifecycle()
+    val attempts by Firewall.attempts.collectAsStateWithLifecycle()
+    if (blocked.isEmpty()) return
+    val consent = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { res ->
+        if (res.resultCode == Activity.RESULT_OK) NetMonitorService.refresh(ctx)
+    }
+    val bad = StatusColors.bad()
+    SectionCard("تطبيقات بدون إنترنت", AppIcons.Block, if (running) bad else StatusColors.warn()) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Dot(if (running) StatusColors.ok() else StatusColors.warn(), 10.dp)
+            Text(
+                if (running) "الحظر يعمل، حتى بعد الخروج من ApkSentry" else "الحظر متوقف الآن: هذه التطبيقات لها إنترنت",
+                style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f),
+            )
+            if (!running) Button(onClick = {
+                val prep = VpnService.prepare(ctx)
+                if (prep == null) NetMonitorService.refresh(ctx) else consent.launch(prep)
+            }, shape = MaterialTheme.shapes.medium) { Text("شغّل") }
+        }
+        blocked.sorted().forEach { pkg ->
+            BlockedRow(pkg, attempts[pkg] ?: 0) { Firewall.unblock(ctx, pkg) }
+        }
+        Hint("لكي يبقى الحظر مضموناً بعد إعادة تشغيل الهاتف، فعّل \"VPN دائم التشغيل\" لـ ApkSentry من إعدادات الـ VPN.")
+        OutlinedButton(onClick = {
+            runCatching { ctx.startActivity(android.content.Intent(android.provider.Settings.ACTION_VPN_SETTINGS)) }
+        }, shape = MaterialTheme.shapes.medium) { Text("افتح إعدادات الـ VPN") }
+    }
+}
+
+@Composable
+private fun BlockedRow(pkg: String, attempts: Int, onUnblock: () -> Unit) {
+    val ctx = LocalContext.current
+    val cs = MaterialTheme.colorScheme
+    val info by produceState<Pair<String, ImageBitmap?>>(pkg to null, pkg) {
+        value = withContext(Dispatchers.IO) {
+            val pm = ctx.packageManager
+            val label = runCatching { pm.getApplicationLabel(pm.getApplicationInfo(pkg, 0)).toString() }.getOrDefault(pkg)
+            label to runCatching { pm.getApplicationIcon(pkg).toBitmap(96, 96).asImageBitmap() }.getOrNull()
+        }
+    }
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+        val bmp = info.second
+        if (bmp != null) Image(bmp, null, Modifier.size(40.dp).clip(RoundedCornerShape(12.dp)))
+        else IconBadge(AppIcons.Block, StatusColors.bad(), 40.dp)
+        Column(Modifier.weight(1f)) {
+            Text(info.first, style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(if (attempts > 0) "منعنا $attempts محاولة اتصال" else "لا محاولات بعد", style = MaterialTheme.typography.bodySmall, color = cs.onSurfaceVariant)
+        }
+        OutlinedButton(onClick = onUnblock, shape = MaterialTheme.shapes.medium) { Text("أرجع الإنترنت") }
     }
 }
 
@@ -239,7 +300,7 @@ private fun MonitorLive(s: MonitorSession) {
                 Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                         Box(Modifier.size(12.dp).alpha(pulse).clip(CircleShape).background(if (s.mode == MonitorMode.BLOCK_ALL) bad else ok))
-                        Text(if (s.mode == MonitorMode.BLOCK_ALL) "الإنترنت مقطوع" else "مراقبة مباشرة", style = MaterialTheme.typography.labelLarge,
+                        Text(if (s.mode == MonitorMode.BLOCK_ALL) "الإنترنت مقطوع (دائم)" else "مراقبة مباشرة", style = MaterialTheme.typography.labelLarge,
                             color = if (s.mode == MonitorMode.BLOCK_ALL) bad else ok)
                     }
                     Column {
@@ -253,12 +314,23 @@ private fun MonitorLive(s: MonitorSession) {
                         StatTile("${events.count { it.blocked }}", "ممنوعة", cs.onSurfaceVariant, Modifier.weight(1f))
                     }
                     Text(
-                        if (s.mode == MonitorMode.BLOCK_ALL) "نسجّل كل ما يحاول التطبيق الوصول إليه، ولا نمرّر شيئاً."
+                        if (s.mode == MonitorMode.BLOCK_ALL) "نسجّل كل ما يحاول التطبيق الوصول إليه، ولا نمرّر شيئاً. يبقى الإنترنت مقطوعاً عنه حتى لو خرجت من ApkSentry أو أعدت تشغيل الهاتف."
                         else "افتح التطبيق الآن واستعمله. المواقع تظهر هنا مباشرة.",
                         style = MaterialTheme.typography.bodySmall, color = cs.onSurfaceVariant,
                     )
-                    OutlinedButton(onClick = { NetMonitorService.stop(ctx) }, modifier = Modifier.fillMaxWidth(), shape = MaterialTheme.shapes.medium) {
-                        Text("إيقاف المراقبة")
+                    if (s.mode == MonitorMode.BLOCK_ALL) {
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            OutlinedButton(onClick = { NetMonitorService.stop(ctx) }, modifier = Modifier.weight(1f), shape = MaterialTheme.shapes.medium) {
+                                Text("رجوع")
+                            }
+                            FilledTonalButton(onClick = { Firewall.unblock(ctx, s.pkg); NetMonitorService.stop(ctx) }, modifier = Modifier.weight(1f), shape = MaterialTheme.shapes.medium) {
+                                Text("أرجع له الإنترنت")
+                            }
+                        }
+                    } else {
+                        OutlinedButton(onClick = { NetMonitorService.stop(ctx) }, modifier = Modifier.fillMaxWidth(), shape = MaterialTheme.shapes.medium) {
+                            Text("إيقاف المراقبة")
+                        }
                     }
                 }
             }

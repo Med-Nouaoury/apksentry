@@ -5,6 +5,9 @@
     <!-- للبحث عن البصمات في VirusTotal و MalwareBazaar فقط (اختياري). لا نرفع أي ملف. -->
     <uses-permission android:name="android.permission.INTERNET" />
 
+    <!-- لإعادة قطع الإنترنت عن التطبيقات المحظورة بعد إعادة تشغيل الهاتف -->
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+
     <!-- لمقارنة توقيع الملف مع النسخة الرسمية المثبتة من Google Play، ولفحص التطبيقات المثبتة لاحقاً -->
     <uses-permission
         android:name="android.permission.QUERY_ALL_PACKAGES"
@@ -44,7 +47,16 @@
             </intent-filter>
         </activity>
 
-        <!-- مراقبة اتصالات تطبيق واحد عبر VPN محلي على الهاتف (لا خوادم خارجية) -->
+        <receiver
+            android:name=".net.BootReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+            </intent-filter>
+        </receiver>
+
+        <!-- جدار حماية ومراقبة لكل تطبيق عبر VPN محلي على الهاتف (لا خوادم خارجية) -->
         <service
             android:name=".net.NetMonitorService"
             android:exported="false"
