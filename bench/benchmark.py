@@ -29,6 +29,7 @@ import shutil
 import subprocess
 import sys
 import time
+import urllib.error
 import urllib.parse
 import urllib.request
 import zipfile
@@ -48,8 +49,14 @@ def log(*a):
 def mb_post(key, data, raw=False, timeout=120):
     req = urllib.request.Request(MB_API, data=urllib.parse.urlencode(data).encode(),
                                  headers={"Auth-Key": key, "User-Agent": UA})
-    with urllib.request.urlopen(req, timeout=timeout) as r:
-        body = r.read()
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            body = r.read()
+    except urllib.error.HTTPError as e:
+        detail = e.read()[:300].decode("utf-8", "replace")
+        hint = {401: "المفتاح غلط", 403: "المفتاح مرفوض أو تجاوزنا الحد اليومي (جرّب غداً، ولا تأكد من MB_API_KEY ف GitHub Secrets)",
+                429: "طلبات كثيرة، جرّب من بعد"}.get(e.code, "")
+        raise SystemExit(f"MalwareBazaar رفض الطلب (HTTP {e.code}): {hint}\n{detail}")
     if raw:
         return body
     return json.loads(body)
