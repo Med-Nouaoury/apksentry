@@ -206,7 +206,7 @@ def diag(text):
 def scan(cli, path, timeout, java):
     t0 = time.time()
     try:
-        p = subprocess.run([java, "-Xmx1g", "-jar", cli, path],
+        p = subprocess.run([java, "-Xmx1g", "-jar", cli, path, "--no-reputation"],
                            capture_output=True, timeout=timeout)
         text = p.stdout.decode("utf-8", "replace")
     except subprocess.TimeoutExpired:

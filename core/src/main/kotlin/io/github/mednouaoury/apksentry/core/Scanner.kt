@@ -22,6 +22,8 @@ class ScanOptions(
     val tempDir: File = File(System.getProperty("java.io.tmpdir")),
     /** تحليل تدفّق البيانات (أبطأ لكنه أعمق). */
     val dataFlow: Boolean = true,
+    /** نستعملو سمعة المصادر الموثوقة (F-Droid). القياس كيطفيها باش يقيس المحرك بوحدو. */
+    val reputation: Boolean = true,
     /** بصمات TLSH لفيروسات معروفة (تعمل بدون إنترنت). */
     val similarity: SimilarityDb = SimilarityDb.EMPTY,
 )
@@ -53,6 +55,7 @@ class Scanner(
             "service" to "service", "receiver" to "receiver", "provider" to "provider",
         )
         private const val MB = 1024L * 1024
+        private val HARD_EVIDENCE = Regex("MalwareBazaar|VirusTotal|فيروس معروف|عُدِّل بعد توقيعه|شهادات مختلفة")
         private val ZERO_WIDTH = setOf('\u200B', '\u2060', '\u2061', '\u2062', '\u2063', '\u2064', '\uFEFF', '\u180E', '\u00AD')
         /** نحسب البصمة التقريبية للملفات حتى هذا الحجم (الفيروسات صغيرة عادة). */
         private const val TLSH_MAX = 300 * MB
@@ -1063,6 +1066,9 @@ class Scanner(
             }
         }
 
+        val rep = if (opts.reputation && pkg != null) Reputation.lookup(pkg, fingerprints) else null
+        if (rep != null) first.lines.add(Line("✔ نفس النسخة اللي كيوزّع ${rep.source} بالضبط (مبنية من الكود المصدري ومراجَعة)", Tone.OK))
+
         if (bytes.ips.isNotEmpty()) flag(10, "عناوين IP مكتوبة مباشرة في الكود: ${bytes.ips.take(10).joinToString(", ")}")
         for (w in bytes.minerHits) flag(40, "آثار برنامج تعدين عملات رقمية في $w")
 
@@ -1092,6 +1098,16 @@ class Scanner(
         for (f in added) findings[f.message] = Finding(f.weight, f.message, if (repack) Kind.DANGER else Kind.INFO)
         if (!repack && added.isNotEmpty())
             notes.add("فيه مكتبات خارجية غير معروفة لدينا، ولأن التطبيق لا يبدو معدّلاً لم نحسبها خطراً (التفاصيل في الأقسام)")
+
+        // مصدر موثوق: القدرات القوية (خدمة الوصول، الرسائل...) كنعرضوها، ولكن ما كنحسبوهاش خطر.
+        // الأدلة القاطعة (فيروس معروف، ملف تبدّل بعد التوقيع) كتبقى محسوبة ديما.
+        if (rep != null) {
+            val soft = findings.values.filter { it.kind == Kind.DANGER && !HARD_EVIDENCE.containsMatchIn(it.message) }
+            for (f in soft) findings[f.message] = Finding(f.weight, f.message, Kind.INFO)
+            behaviors.removeAll { b -> soft.any { it.message.endsWith(b.message) } }
+            if (soft.isNotEmpty())
+                notes.add("لقينا ${soft.size} قدرات قوية (التفاصيل ف الأقسام)، ولكن ما حسبناهاش خطر حيت هادي النسخة الرسمية ديال ${rep.source}")
+        }
 
         val order = compareByDescending<Finding> { it.weight }.thenByDescending { it.message }
         val dangers = findings.values.filter { it.kind == Kind.DANGER }.sortedWith(order)
@@ -1135,6 +1151,7 @@ class Scanner(
             advice = advice,
             durationMs = ms,
             appLabel = appLabel,
+            trustedSource = rep?.source,
             tlsh = mainTlsh,
         )
     }

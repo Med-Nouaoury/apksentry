@@ -54,6 +54,8 @@ class ScanResult(
     val appLabel: String? = null,
     /** البصمة التقريبية TLSH للملف. */
     val tlsh: String? = null,
+    /** النسخة مطابقة لمصدر موثوق (مثلاً F-Droid). */
+    val trustedSource: String? = null,
 ) {
     val level: RiskLevel get() = RiskLevel.of(riskScore)
     val isModified: Boolean get() = modScore >= 10

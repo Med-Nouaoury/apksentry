@@ -1,0 +1,26 @@
+name: Update reputation
+
+# كل أسبوع: نحدّثو لائحة توقيعات F-Droid الموثوقة.
+on:
+  schedule:
+    - cron: "17 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build F-Droid signer list
+        run: python3 tools/fdroid_signers.py core/src/main/resources/reputation/fdroid-signers.tsv
+      - name: Commit if changed
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add core/src/main/resources/reputation/fdroid-signers.tsv
+          if git diff --cached --quiet; then echo "no change"; exit 0; fi
+          git commit -m "Update F-Droid signer reputation list"
+          git push

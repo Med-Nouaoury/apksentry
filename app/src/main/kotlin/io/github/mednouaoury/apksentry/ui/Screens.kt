@@ -589,6 +589,7 @@ private fun VerdictHero(r: ScanResult) {
                 Text(r.level.explanation, style = MaterialTheme.typography.bodyMedium, color = cs.onSurfaceVariant)
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     if (r.integrityVerified) Pill("✔ التوقيع سليم", StatusColors.ok())
+                    r.trustedSource?.let { Pill("✔ نسخة $it الرسمية", StatusColors.ok()) }
                     if (r.signers.size > 1) Pill("شهادات مختلفة!", StatusColors.bad())
                 }
             }

@@ -159,4 +159,13 @@ class LayersTest {
         // علامة الاتجاه ف ترجمة عربية عادية ماشي حيلة
         assertTrue(!zw.containsMatchIn("\u200Fالملفات"))
     }
+
+    @Test
+    fun reputationNeedsEverySignerToMatch() {
+        val known = setOf("aa", "bb")
+        assertTrue(Reputation.matches(known, listOf("AA")))
+        assertTrue(!Reputation.matches(known, listOf("aa", "cc")), "توقيع إضافي غريب")
+        assertTrue(!Reputation.matches(known, emptyList()), "بلا توقيع")
+        assertTrue(!Reputation.matches(null, listOf("aa")), "حزمة ماشي ف F-Droid")
+    }
 }
