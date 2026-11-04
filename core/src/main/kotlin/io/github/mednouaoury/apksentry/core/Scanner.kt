@@ -42,7 +42,7 @@ class Scanner(
     private val isCancelled: () -> Boolean = { false },
 ) {
     companion object {
-        const val VERSION = "3.7.2"
+        const val VERSION = "3.7.3"
         private val DEX_RE = Regex("classes\\d*\\.dex")
         private val B64_RE = Regex("[A-Za-z0-9+/=]{80,}")
         private val PATH_RE = Regex("\\.so$|^lib\\w+$|/data/|/sdcard|/storage/|/system/|\\.dex$|\\.apk$|\\.jar$")
@@ -194,7 +194,7 @@ class Scanner(
         report("قراءة الملف...", 0f)
         val outer = ZipArchive(src)
         progressSpan = 0f
-        phase("بصمة الملف") { fingerprint(src, "الملف كاملاً", top = true) }
+        phase("بصمة الملف") { fingerprint(src, "الملف كاملاً", top = true, bundle = outer.entry("AndroidManifest.xml") == null) }
         if (outer.entry("AndroidManifest.xml") != null) {
             out("النوع: APK عادي")
             progressBase = 0f; progressSpan = 1f
@@ -491,11 +491,11 @@ class Scanner(
     }
 
     /** بصمة SHA-256 + البصمة التقريبية TLSH في قراءة واحدة، ثم المقارنة مع قواعد الفيروسات. */
-    private fun fingerprint(src: ByteSource, label: String, top: Boolean) {
+    private fun fingerprint(src: ByteSource, label: String, top: Boolean, bundle: Boolean = false) {
         val db = opts.similarity
         val small = src.size <= TLSH_MAX
         if (!small && !intel) {
-            if (top) out("البصمة التقريبية: الملف كبير (${sizeText(src.size)})، نحسبها فقط للملفات حتى ${sizeText(TLSH_MAX)}", Tone.MUTED)
+            if (top) out("البصمة التقريبية: الملف كبير (${sizeText(src.size)})، " + (if (bundle) "فنحسبها لكل APK بداخله (حيث يوجد الكود)" else "نحسبها فقط للملفات حتى ${sizeText(TLSH_MAX)}"), Tone.MUTED)
             return
         }
         report("حساب بصمة $label...")
@@ -635,8 +635,13 @@ class Scanner(
         if (behaviors.isNotEmpty())
             s.add(Line("يتصرّف مثل الفيروسات: " + behaviors.first().message.substringBefore(" (").substringBefore(":") +
                 (if (behaviors.size > 1) "، و${count(behaviors.size - 1, "سلوك آخر", "سلوكين آخرين", "سلوكيات أخرى", "سلوكاً آخر")}" else "") + ".", Tone.BAD))
-        else if (all.none { it.contains("فيروس معروف") })
-            s.add(Line("لم نجد سلوك فيروس: لا يسرق رسائلك ولا يتحكم في شاشتك ولا يرسل بياناتك.", Tone.OK))
+        else if (all.none { it.contains("فيروس معروف") }) {
+            // إذا كان جزء من الكود مخفياً ولم نفكّه، لا نعد بشيء عن الجزء الذي لم نره
+            if (!hiddenPayload && (hidingTool || addedNativeLib || packedDex))
+                s.add(Line("في الكود الذي استطعنا قراءته، لم نجد سلوك فيروس. لكن جزءاً منه مخفي، ولا نعرف ما يفعله.", Tone.WARN))
+            else
+                s.add(Line("لم نجد سلوك فيروس: لا يسرق رسائلك ولا يتحكم في شاشتك ولا يرسل بياناتك.", Tone.OK))
+        }
         when {
             rep != null -> s.add(Line("هذه النسخة الرسمية من ${rep.source} نفسها.", Tone.OK))
             repack -> {
