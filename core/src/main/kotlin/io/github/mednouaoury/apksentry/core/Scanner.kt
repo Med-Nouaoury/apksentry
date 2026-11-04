@@ -42,7 +42,7 @@ class Scanner(
     private val isCancelled: () -> Boolean = { false },
 ) {
     companion object {
-        const val VERSION = "3.8.4"
+        const val VERSION = "3.8.5"
         private val DEX_RE = Regex("classes\\d*\\.dex")
         private val B64_RE = Regex("[A-Za-z0-9+/=]{80,}")
         private val PATH_RE = Regex("\\.so$|^lib\\w+$|/data/|/sdcard|/storage/|/system/|\\.dex$|\\.apk$|\\.jar$")
@@ -1323,6 +1323,12 @@ class Scanner(
             val soft = findings.values.filter { it.kind == Kind.DANGER && !HARD_EVIDENCE.containsMatchIn(it.message) }
             for (f in soft) findings[f.message] = Finding(f.weight, f.message, Kind.INFO)
             behaviors.removeAll { b -> soft.any { it.message.endsWith(b.message) } }
+            // درجة التعديل تجيب: "هل عدّله أو أعاد توقيعه طرف غير المطوّر؟" والتوقيع هنا توقيع المطوّر نفسه.
+            // علامات الحماية والكود المحمّل هي اختيارات المطوّر، لا أثر معدِّل.
+            val ownMods = findings.values.filter { it.kind == Kind.MOD }
+            for (f in ownMods) findings[f.message] = Finding(f.weight, f.message, Kind.INFO)
+            if (ownMods.isNotEmpty())
+                notes.add("علامات الحماية أو الكود المخفي (${ownMods.size}) من المطوّر نفسه، لأن التوقيع توقيعه: لم نحسبها تعديلاً")
             if (soft.isNotEmpty())
                 notes.add("وجدنا ${soft.size} قدرات قوية (التفاصيل في الأقسام)، لكن لم نحسبها خطراً لأن " + (if (officialMatch != null) "النسخة موقّعة من المطوّر الرسمي" else "هذه النسخة الرسمية من ${rep.source}"))
         }
