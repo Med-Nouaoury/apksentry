@@ -115,7 +115,7 @@ internal class Libc(private val rt: NativeRuntime) {
             }
             "vsprintf" -> { c -> val out = format(rt, c, s(c.x[1]), Args(c, m, -1, c.x[2])).toByteArray(); m.put(c.x[0], out); m.w8(c.x[0] + out.size, 0); ret(c, out.size.toLong()) }
             "printf", "puts", "fprintf", "fputs", "putchar", "fflush", "perror" -> { c -> ret(c, 0) }
-            "__android_log_print" -> { c -> rt.strings.add("LOG: " + format(rt, c, s(c.x[2]), Args(c, m, 3)).take(200)); ret(c, 0) }
+            "__android_log_print" -> { c -> val msg = format(rt, c, s(c.x[2]), Args(c, m, 3)).take(200); rt.strings.add("LOG: $msg"); rt.tr("     LOG: $msg"); ret(c, 0) }
             "__android_log_write" -> { c -> rt.strings.add("LOG: " + s(c.x[2]).take(200)); ret(c, 0) }
             "__android_log_vprint" -> { c -> rt.strings.add("LOG: " + format(rt, c, s(c.x[2]), Args(c, m, -1, c.x[3])).take(200)); ret(c, 0) }
             "sscanf" -> { c -> ret(c, 0) }

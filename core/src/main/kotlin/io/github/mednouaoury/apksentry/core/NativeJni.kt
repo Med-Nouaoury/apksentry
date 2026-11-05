@@ -112,6 +112,7 @@ internal object Jni {
         fun invoke(c: Arm64, recv: Any?, mid: JMethodId?, isStatic: Boolean, args: List<Any?>): Any? {
             if (mid == null) return null
             record(mid.cls, mid.name)
+            rt.tr("     JNI: ${mid.cls}->${mid.name}${mid.sig} على ${recv?.let { it.javaClass.simpleName + ":" + it.toString().take(40) }}")
             // الدليل الأقوى: محتوى الطلب نفسه (الرقم ونص الرسالة كانا مشفّرين في الملف)
             if (mid.cls == "Landroid/telephony/SmsManager;" && mid.name.startsWith("send") && args.isNotEmpty())
                 rt.events.add("يرسل رسالة SMS إلى ${args[0]}" + ((args.getOrNull(2) as? String)?.let { ": \"${it.take(80)}\"" } ?: ""))
@@ -173,7 +174,7 @@ internal object Jni {
         fun handler(i: Int): (Arm64) -> Unit = when {
             i == 4 -> { c -> c.x[0] = 0x10006 }
             i == 5 -> { c -> rt.events.add("يعرّف كلاساً من bytes (DefineClass)"); c.x[0] = 0 }
-            i == 6 -> { c -> val nm = s(c.x[1]); rt.strings.add("FindClass: $nm"); c.x[0] = h(EClass(if (nm.startsWith("[")) nm else "L$nm;")) }
+            i == 6 -> { c -> val nm = s(c.x[1]); rt.strings.add("FindClass: $nm"); rt.tr("     FindClass $nm"); c.x[0] = h(EClass(if (nm.startsWith("[")) nm else "L$nm;")) }
             i == 7 || i == 8 || i == 9 || i == 12 -> { c -> c.x[0] = c.x[1] }
             i == 10 -> { c -> c.x[0] = h(EClass("Ljava/lang/Object;")) }
             i == 11 -> { c -> c.x[0] = 1 }
