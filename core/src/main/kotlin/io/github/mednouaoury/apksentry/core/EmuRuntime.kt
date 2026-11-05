@@ -110,15 +110,36 @@ class EmuRuntime(
 
     val nativeRuntime: NativeRuntime? get() = nativeRt
 
+    /** نحن داخل System.loadLibrary (يظهر في الـ stack trace مثل الهاتف الحقيقي). */
+    private var inLoadLibrary = false
+
+    /**
+     * stack trace مثل الذي يراه الكود على هاتف حقيقي: إطارات ART، ثم وظائف التطبيق التي ننفّذها (الأحدث أولاً)،
+     * ثم بداية التطبيق. بعض الأغلفة تتحقق منه لتعرف من استدعاها، وتتوقف إذا كان فارغاً (علامة محاكي).
+     */
+    fun stackTrace(emu: DalvikEmulator): Array<StackTraceElement> {
+        val out = ArrayList<StackTraceElement>()
+        fun f(c: String, m: String) = out.add(StackTraceElement(c, m, null, -2))
+        f("dalvik.system.VMStack", "getThreadStackTrace"); f("java.lang.Thread", "getStackTrace")
+        if (inLoadLibrary) { f("java.lang.Runtime", "nativeLoad"); f("java.lang.Runtime", "loadLibrary0"); f("java.lang.System", "loadLibrary") }
+        for (m in emu.frames.asReversed()) out.add(StackTraceElement(m.cls.trim('L', ';').replace('/', '.'), m.name, null, -1))
+        f("android.app.ActivityThread", "handleBindApplication"); f("android.app.ActivityThread", "main")
+        f("java.lang.reflect.Method", "invoke"); f("com.android.internal.os.ZygoteInit", "main")
+        return out.toTypedArray()
+    }
+
     fun loadNative(name: String) {
         val b = native() ?: return
         val lib = if (name.endsWith(".so")) name.substringAfterLast('/') else "lib$name.so"
         if (lib in NativeRuntime.ENGINE_LIBS) return
         val bytes = b.rt.libBytes(lib) ?: return
-        b.rt.guarded(lib) {
-            val l = b.rt.load(lib, bytes)
-            if (l != null) b.rt.runJniOnLoad(l)
-        }
+        inLoadLibrary = true
+        try {
+            b.rt.guarded(lib) {
+                val l = b.rt.load(lib, bytes)
+                if (l != null) b.rt.runJniOnLoad(l)
+            }
+        } finally { inLoadLibrary = false }
     }
 
     fun checkTime() {
@@ -263,6 +284,7 @@ class EmuRuntime(
             }
             is ThreadStub -> return when (name) {
                 "start", "run" -> runRunnable(recv.runnable, emu)
+                "getStackTrace" -> stackTrace(emu)
                 "getContextClassLoader" -> ClassLoaderStub("ctx")
                 else -> defaultFor(ret)
             }
@@ -709,7 +731,7 @@ class EmuRuntime(
 
         /** كلاسات آمنة: تعمل في الذاكرة فقط (لا ملفات، لا شبكة، لا عمليات، لا reflection، لا تحميل كود). */
         val ALLOW = setOf(
-            "java.lang.String", "java.lang.StringBuilder", "java.lang.StringBuffer", "java.lang.CharSequence", "java.lang.AbstractStringBuilder",
+            "java.lang.StackTraceElement", "java.lang.String", "java.lang.StringBuilder", "java.lang.StringBuffer", "java.lang.CharSequence", "java.lang.AbstractStringBuilder",
             "java.lang.Integer", "java.lang.Long", "java.lang.Short", "java.lang.Byte", "java.lang.Character", "java.lang.Boolean",
             "java.lang.Float", "java.lang.Double", "java.lang.Number", "java.lang.Math", "java.lang.Comparable", "java.lang.Iterable",
             "java.util.Arrays", "java.util.ArrayList", "java.util.LinkedList", "java.util.HashMap", "java.util.LinkedHashMap",

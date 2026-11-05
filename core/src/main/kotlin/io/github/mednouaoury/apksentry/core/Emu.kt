@@ -190,12 +190,14 @@ class DalvikEmulator(dexes: List<DexFile>, private val rt: EmuRuntime) {
             if (m.access and 0x100 != 0) {
                 // وظيفة native: ننفّذها في محاكي ARM64 (نفس الصندوق)
                 val nat = rt.native() ?: throw EmuUnsupported("native ${m.cls}->${m.name}")
-                return nat.callFromJava(m, args)
+                frames.add(m)
+                try { return nat.callFromJava(m, args) } finally { frames.removeAt(frames.size - 1) }
             }
             throw EmuUnsupported("abstract ${m.cls}->${m.name}")
         }
         val code = codeCache.getOrPut(m.dex to m.codeOff) { readCode(m.dex, m.codeOff) } ?: throw EmuUnsupported("bad code")
         if (++depth > 120) { depth--; throw EmuLimit("عمق الاستدعاءات") }
+        frames.add(m)
         try {
             val regs = arrayOfNulls<Any?>(code.regs)
             var r = code.regs - code.ins
@@ -211,8 +213,12 @@ class DalvikEmulator(dexes: List<DexFile>, private val rt: EmuRuntime) {
             return result
         } finally {
             depth--
+            frames.removeAt(frames.size - 1)
         }
     }
+
+    /** الوظائف التي ننفّذها الآن (للـ stack trace: بعض الأغلفة تتحقق من هوية من استدعاها). */
+    val frames = ArrayList<AppMethod>()
 
     /** يستدعي وظيفة باسمها (للمرجع من reflection أو من الكود). */
     fun dispatch(cls: String, name: String, params: List<String>, ret: String, args: List<Any?>, virtual: Boolean, isSuper: Boolean = false): Any? {

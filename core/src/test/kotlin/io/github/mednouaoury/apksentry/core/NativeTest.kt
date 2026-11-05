@@ -87,6 +87,16 @@ class NativeTest {
         assertTrue(r.behaviors.isNotEmpty() && r.riskScore >= 60, r.toText())
     }
 
+    /**
+     * حيلة ضد المحاكيات رأيناها في فيروسات حقيقية (عائلة libsa): JNI_OnLoad يقرأ الـ stack trace
+     * ويتوقف إذا لم يجد الكلاس الذي يُفترض أنه استدعاه. نعطيه stack trace حقيقياً من إطارات المحاكي.
+     */
+    @Test
+    fun stackTraceCheckIsPassed() {
+        val r = Scanner(ScanOptions()).scan(ByteArraySource(resource("nstk.apk")), "nstk.apk")
+        assertTrue(r.dangers.any { "فككناه" in it.message }, r.toText())
+    }
+
     @Test
     fun hiddenNativeSmsFraudIsCaught() {
         val r = Scanner(ScanOptions()).scan(ByteArraySource(resource("nspy.apk")), "nspy.apk")

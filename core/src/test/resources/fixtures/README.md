@@ -43,3 +43,6 @@ against the JDK's `jni.h`:
 `rotated.apk` / `mixed.apk`: hand-built APK Signing Blocks (validated with `apksigtool`). `rotated`: v2 signed
 with an old key, v3 with a new key plus a proof-of-rotation lineage linking them (legitimate key rotation, as
 WhatsApp does). `mixed`: the same old v2 key next to an unrelated v3 key with no lineage (suspicious).
+
+`nstk.apk` (`stk.c`): anti-emulation seen in a real malware family — `JNI_OnLoad` reads `Thread.getStackTrace()`
+and only registers its decryptor if the expected Java class is a caller.
