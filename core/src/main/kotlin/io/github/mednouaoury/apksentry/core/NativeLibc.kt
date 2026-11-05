@@ -129,7 +129,17 @@ internal class Libc(private val rt: NativeRuntime) {
             "pthread_cond_init", "pthread_cond_broadcast", "pthread_cond_signal", "pthread_cond_destroy", "pthread_mutexattr_init",
             "pthread_mutexattr_settype", "pthread_mutexattr_destroy", "pthread_rwlock_rdlock", "pthread_rwlock_wrlock", "pthread_rwlock_unlock",
             "pthread_attr_init", "pthread_attr_destroy", "pthread_attr_setstacksize", "pthread_attr_setdetachstate", "pthread_detach", "pthread_join",
-            "pthread_setname_np", "pthread_key_delete", "sched_yield", "usleep", "sleep", "nanosleep" -> { c -> ret(c, 0) }
+            "pthread_setname_np", "pthread_key_delete", "sched_yield" -> { c -> ret(c, 0) }
+            // النوم يقدّم الساعة الوهمية فوراً: "انتظر 5 ثوانٍ ثم فكّ الكود" ينتهي في لحظة
+            "usleep" -> { c -> rt.sleepNanos(c.x[0] * 1000); ret(c, 0) }
+            "sleep" -> { c -> rt.sleepNanos(c.x[0] * 1_000_000_000); ret(c, 0) }
+            "nanosleep" -> { c -> if (c.x[0] != 0L) rt.sleepNanos(m.read(c.x[0], 8) * 1_000_000_000 + m.read(c.x[0] + 8, 8)); ret(c, 0) }
+            "getauxval" -> { c -> ret(c, when (c.x[0].toInt()) {
+                16 -> 0x83L        // AT_HWCAP: FP + ASIMD + CRC32 (بدون AES/SHA: تعليمات لا ندعمها)
+                6 -> 4096L         // AT_PAGESZ
+                25 -> rt.malloc(16).also { p -> for (i in 0 until 16) m.w8(p + i, 0x5a xor i) } // AT_RANDOM
+                else -> 0L
+            }) }
             "pthread_self" -> { c -> ret(c, 0x7f_fe00_0000L) }
             "pthread_once" -> { c ->
                 val ctl = c.x[0]; val fn = c.x[1]
@@ -147,10 +157,10 @@ internal class Libc(private val rt: NativeRuntime) {
                 rt.guarded("خيط native") { rt.callFunction(fn, arg) }
                 ret(c, 0)
             }
-            "time" -> { c -> if (c.x[0] != 0L) m.write(c.x[0], 8, 1_700_000_000); ret(c, 1_700_000_000) }
-            "gettimeofday" -> { c -> if (c.x[0] != 0L) { m.write(c.x[0], 8, 1_700_000_000); m.write(c.x[0] + 8, 8, 0) }; ret(c, 0) }
-            "clock_gettime" -> { c -> m.write(c.x[1], 8, 1_700_000_000); m.write(c.x[1] + 8, 8, 0); ret(c, 0) }
-            "clock" -> { c -> ret(c, 1000) }
+            "time" -> { c -> val t = rt.nowNanos() / 1_000_000_000; if (c.x[0] != 0L) m.write(c.x[0], 8, t); ret(c, t) }
+            "gettimeofday" -> { c -> val t = rt.nowNanos(); if (c.x[0] != 0L) { m.write(c.x[0], 8, t / 1_000_000_000); m.write(c.x[0] + 8, 8, t % 1_000_000_000 / 1000) }; ret(c, 0) }
+            "clock_gettime" -> { c -> val t = rt.nowNanos(); m.write(c.x[1], 8, t / 1_000_000_000); m.write(c.x[1] + 8, 8, t % 1_000_000_000); ret(c, 0) }
+            "clock" -> { c -> ret(c, (rt.nowNanos() - NativeRuntime.CLOCK_BASE) / 1000) }
             "rand", "lrand48", "random" -> { c -> rnd = rnd * 1103515245 + 12345; ret(c, (rnd ushr 16) and 0x7fffffff) }
             "sysconf" -> { c -> ret(c, when (c.x[0].toInt()) { 39, 40 -> 4096; 96, 97 -> 8; else -> 0 }) }
             "getenv" -> { c -> ret(c, 0) }

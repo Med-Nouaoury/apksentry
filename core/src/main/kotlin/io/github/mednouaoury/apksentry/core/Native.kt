@@ -66,6 +66,8 @@ class NativeRuntime(
         const val RET = 0x7d_0000_0000L
         const val HANDLES = 0x71_0000_0000L
         const val STACK_GUARD = 0x1d2c3b4a59687706L
+        /** بداية الساعة الوهمية (نوفمبر 2023). */
+        const val CLOCK_BASE = 1_700_000_000_000_000_000L
         val ENGINE_LIBS = setOf("libunity.so", "libil2cpp.so", "libmain.so", "libflutter.so", "libapp.so", "libc++_shared.so",
             "libreactnativejni.so", "libhermes.so", "libjsc.so", "libmonosgen-2.0.so", "libxamarin-app.so", "libUE4.so", "libgdx.so",
             "libcocos2dcpp.so", "libfmod.so", "libvklayer_khronos_validation.so", "libtensorflowlite_jni.so", "libsqlcipher.so")
@@ -101,6 +103,18 @@ class NativeRuntime(
         cpu.sp = STACK_TOP - 0x100
         cpu.onSvc = { c, _ -> syscall(c) }
     }
+
+    // ---------------- الساعة الوهمية ----------------
+    // الوقت يتقدّم مع التنفيذ (100 مليون تعليمة = ثانية)، والنوم يقدّمه فوراً.
+    // بدون هذا، كود "انتظر حتى يمرّ الوقت" (حيلة ضد المحاكيات) يدور إلى الأبد.
+    private var slept = 0L
+    fun nowNanos(): Long = CLOCK_BASE + cpu.steps * 10 + slept
+    fun sleepNanos(n: Long) { if (n > 0) slept += minOf(n, 3600L * 1_000_000_000) }
+
+    // ---------------- التتبّع (للتشخيص) ----------------
+    /** إذا لم يكن null: كل طلب عبر البابين يُسجَّل بالترتيب (--debug). */
+    var trace: MutableList<String>? = null
+    fun tr(s: String) { trace?.let { if (it.size < 400) it.add(s) } }
 
     // ---------------- الذاكرة ----------------
     private var heapTop = HEAP
@@ -152,9 +166,16 @@ class NativeRuntime(
             for (i in 0 until 1024) mem.write(a + 4L * i, 4, 0xd65f03c0) // ret
         }
         stubCount++
-        cpu.hooks[a] = handler
+        cpu.hooks[a] = { c ->
+            if (trace != null) tr("${where(c.x[30])} → $name(${c.x[0].toString(16)}, ${c.x[1].toString(16)}, ${c.x[2].toString(16)})")
+            handler(c)
+            if (trace != null) tr("   ← ${c.x[0].toString(16)}")
+        }
         a
     }
+
+    /** عنوان مقروء: المكتبة + الإزاحة. */
+    fun where(a: Long): String = libs.values.firstOrNull { a in it.base until it.end }?.let { "${it.name}+0x${(a - it.base).toString(16)}" } ?: "0x${a.toString(16)}"
 
     // ---------------- تشغيل دالة ----------------
     private var depth = 0
@@ -258,6 +279,8 @@ class NativeRuntime(
         }
         val lib = NativeLib(name, base + lo, base + hi, exports, neededNames)
         libs[name] = lib
+        tr("تحميل $name: ${exports.size} دالة مصدّرة؛ JNI: ${exports.keys.filter { it.startsWith("JNI_") || it.startsWith("Java_") }.take(12)}" +
+            "؛ init_array ${initArraySz / 8}؛ NEEDED $neededNames")
         // المكتبات المطلوبة من نفس التطبيق نحمّلها قبل التحويلات
         for (n in neededNames) if (n !in libs && n !in SYSTEM_LIBS) libBytes(n)?.let { load(n, it, runInit) }
 
@@ -395,6 +418,7 @@ class NativeRuntime(
 
     /** يشغّل خطوة مع حماية: الأخطاء تُسجَّل ولا توقف الفحص. */
     fun guarded(label: String, block: () -> Unit) {
+        tr("== $label")
         try { block() }
         catch (e: EmuLimit) { stops.add("$label: توقّف (${e.message})") }
         catch (e: EmuUnsupported) { stops.add("$label: ${e.message}") }
@@ -444,7 +468,9 @@ class NativeRuntime(
             221 -> { events.add("يحاول تشغيل برنامج (execve): ${str(c.x[0])}"); -1 }
             129, 131 -> { events.add("يحاول قتل عملية (kill)"); 0 }
             93, 94 -> throw EmuLimit("خروج الكود (exit)")
-            113 -> { mem.write(c.x[1], 8, 1_700_000_000); mem.write(c.x[1] + 8, 8, 0); 0 }
+            113 -> { val t = nowNanos(); mem.write(c.x[1], 8, t / 1_000_000_000); mem.write(c.x[1] + 8, 8, t % 1_000_000_000); 0 }
+            101 -> { if (c.x[0] != 0L) sleepNanos(mem.read(c.x[0], 8) * 1_000_000_000 + mem.read(c.x[0] + 8, 8)); 0 } // nanosleep
+            115 -> { if (c.x[2] != 0L) sleepNanos(mem.read(c.x[2], 8) * 1_000_000_000 + mem.read(c.x[2] + 8, 8)); 0 } // clock_nanosleep
             167 -> 0 // prctl
             else -> { events.add("syscall مباشر رقم $nr"); -38 }
         }

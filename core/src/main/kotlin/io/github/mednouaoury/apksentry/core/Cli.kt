@@ -18,6 +18,7 @@ object Cli {
         var trustFile: String? = null
         var noFlow = false
         var noRep = false
+        var debug = false
         var simFile: String? = null
         var expect: String? = null
         var report: String? = null
@@ -29,6 +30,7 @@ object Cli {
                 "--trusted" -> trustFile = args.getOrNull(++i)
                 "--no-flow" -> noFlow = true
                 "--no-reputation" -> noRep = true
+                "--debug" -> debug = true
                 "--tlsh-db" -> simFile = args.getOrNull(++i)
                 "--expect" -> expect = args.getOrNull(++i)
                 "--out" -> report = args.getOrNull(++i)
@@ -57,6 +59,7 @@ object Cli {
             officialCerts = { pkg -> trusted.filter { it.first == pkg }.map { OfficialCert(it.second, "قائمتك الموثوقة") } },
             dataFlow = !noFlow,
             reputation = !noRep,
+            debug = debug,
             similarity = simFile?.let { SimilarityDb.parse(File(it).readText()) } ?: SimilarityDb.EMPTY,
         )
         val scanner = Scanner(options, { msg, frac ->

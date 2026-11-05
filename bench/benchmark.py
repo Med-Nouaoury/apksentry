@@ -216,10 +216,13 @@ def diag(text):
     return [l[:300] for l in lines[:40]] + ["MOD " + m.strip()[:160] for m in mods if m.strip()]
 
 
+FULL = False
+
+
 def scan(cli, path, timeout, java):
     t0 = time.time()
     try:
-        p = subprocess.run([java, "-Xmx1g", "-jar", cli, path, "--no-reputation"],
+        p = subprocess.run([java, "-Xmx1g", "-jar", cli, path, "--no-reputation"] + (["--debug"] if FULL else []),
                            capture_output=True, timeout=timeout)
         text = p.stdout.decode("utf-8", "replace")
     except subprocess.TimeoutExpired:
@@ -256,6 +259,8 @@ def main():
     ap.add_argument("--sha-list", help="ملف فيه لائحة sha256 (باش نعاودو نفس العينات ونقارنو قبل/بعد)")
     ap.add_argument("--full", action="store_true", help="نطبعو التقرير كامل ديال كل ملف (للتشخيص)")
     a = ap.parse_args()
+    global FULL
+    FULL = a.full
 
     os.makedirs(a.out, exist_ok=True)
     mal_dir = os.path.join(a.out, "malware_samples")

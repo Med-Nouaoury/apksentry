@@ -10,6 +10,29 @@ internal object Jni {
     private val PRIMS = listOf("Z", "B", "C", "S", "I", "J", "F", "D")
 
     private class DirectBuf(val addr: Long, val cap: Long)
+
+    private val T = listOf("Object", "Boolean", "Byte", "Char", "Short", "Int", "Long", "Float", "Double", "Void")
+    private val P = listOf("Boolean", "Byte", "Char", "Short", "Int", "Long", "Float", "Double")
+    private val FIXED = mapOf(4 to "GetVersion", 5 to "DefineClass", 6 to "FindClass", 10 to "GetSuperclass", 13 to "Throw", 14 to "ThrowNew",
+        15 to "ExceptionOccurred", 17 to "ExceptionClear", 18 to "FatalError", 21 to "NewGlobalRef", 23 to "DeleteLocalRef", 27 to "AllocObject",
+        28 to "NewObject", 31 to "GetObjectClass", 32 to "IsInstanceOf", 33 to "GetMethodID", 94 to "GetFieldID", 113 to "GetStaticMethodID",
+        144 to "GetStaticFieldID", 163 to "NewString", 164 to "GetStringLength", 167 to "NewStringUTF", 169 to "GetStringUTFChars",
+        170 to "ReleaseStringUTFChars", 171 to "GetArrayLength", 172 to "NewObjectArray", 173 to "GetObjectArrayElement", 215 to "RegisterNatives",
+        219 to "GetJavaVM", 222 to "GetPrimitiveArrayCritical", 223 to "ReleasePrimitiveArrayCritical", 228 to "ExceptionCheck",
+        229 to "NewDirectByteBuffer", 230 to "GetDirectBufferAddress")
+
+    /** اسم دالة JNI حسب رقمها في الجدول (للتتبّع). */
+    fun name(i: Int): String = FIXED[i] ?: when (i) {
+        in 34..63 -> "Call${T[(i - 34) / 3]}Method" + listOf("", "V", "A")[(i - 34) % 3]
+        in 64..93 -> "CallNonvirtual${T[(i - 64) / 3]}Method" + listOf("", "V", "A")[(i - 64) % 3]
+        in 114..143 -> "CallStatic${T[(i - 114) / 3]}Method" + listOf("", "V", "A")[(i - 114) % 3]
+        in 95..103 -> "Get${T[i - 95]}Field"; in 104..112 -> "Set${T[i - 104]}Field"
+        in 145..153 -> "GetStatic${T[i - 145]}Field"; in 154..162 -> "SetStatic${T[i - 154]}Field"
+        in 175..182 -> "New${P[i - 175]}Array"; in 183..190 -> "Get${P[i - 183]}ArrayElements"
+        in 191..198 -> "Release${P[i - 191]}ArrayElements"; in 199..206 -> "Get${P[i - 199]}ArrayRegion"
+        in 207..214 -> "Set${P[i - 207]}ArrayRegion"
+        else -> "#$i"
+    }
     private class Pinned(val array: Any, val addr: Long)
 
     fun makeVm(rt: NativeRuntime): Long {
@@ -276,7 +299,7 @@ internal object Jni {
             else -> { c -> c.x[0] = 0 }
         }
 
-        for (i in 0 until n) m.write(table + 8L * i, 8, rt.stub("jni:$i", handler(i)))
+        for (i in 0 until n) m.write(table + 8L * i, 8, rt.stub("JNI." + name(i), handler(i)))
         val env = rt.malloc(8)
         m.write(env, 8, table)
         return env

@@ -23,6 +23,7 @@ object Unpacker {
         val stops: List<String>,
         val steps: Long,
         val coverage: Int,
+        val trace: List<String>? = null,
     )
 
     val LOADERS = setOf(
@@ -49,10 +50,12 @@ object Unpacker {
         checkCancel: () -> Unit = {},
         runNative: Boolean = true,
         memBudget: Long = 512L * 1024 * 1024,
+        debug: Boolean = false,
     ): Result {
         // الميزانية تتقاسمها المحاكاتان: Dalvik الثلث (حتى 192 ميجا)، و native الربع (حتى 96 ميجا)
         val rt = EmuRuntime(pkg, apkBytes, zip, maxAlloc = minOf(192L * 1024 * 1024, memBudget / 3))
         rt.nativeMemory = minOf(96L * 1024 * 1024, memBudget / 4)
+        rt.nativeDebug = debug
         rt.nativeEnabled = runNative
         for (d in dexes) rt.known.add(java.security.MessageDigest.getInstance("SHA-256").digest(d.bytes).toHex())
         rt.known.addAll(plain)
@@ -227,7 +230,7 @@ object Unpacker {
         val nr = rt.nativeRuntime
         val native = if (nr == null || nr.libs.isEmpty()) null else {
             nr.cpu.trackCoverage = false
-            NativeReport(natLibs.ifEmpty { nr.libs.keys.toList() }, nativeCalls, nr.jniCalls.toSet(), nr.events.toSet(), nr.strings.toSet(), nr.stops.toList(), nr.cpu.steps, 0)
+            NativeReport(natLibs.ifEmpty { nr.libs.keys.toList() }, nativeCalls, nr.jniCalls.toSet(), nr.events.toSet(), nr.strings.toSet(), nr.stops.toList(), nr.cpu.steps, 0, nr.trace?.toList())
         }
         return Result(rt.captured.toList(), rt.events, emu.steps, stops, native)
     }

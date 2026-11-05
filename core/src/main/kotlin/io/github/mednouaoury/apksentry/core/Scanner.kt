@@ -26,6 +26,8 @@ class ScanOptions(
     val reputation: Boolean = true,
     /** بصمات TLSH لفيروسات معروفة (تعمل بدون إنترنت). */
     val similarity: SimilarityDb = SimilarityDb.EMPTY,
+    /** تتبّع مفصّل لما يفعله الكود native (للتشخيص). */
+    val debug: Boolean = false,
 )
 
 fun interface ProgressListener {
@@ -589,7 +591,7 @@ class Scanner(
         }
         val apkBytes = if (src.size <= 64 * MB && free > 256 * MB) try { src.openStream().use { it.readAllCompat(64 * MB) } } catch (e: Exception) { null } else null
         val r = Unpacker.run(zip, apkBytes, dexes.toList(), pkg, app?.attr("name"), app?.attr("appComponentFactory"), plain, ::checkCancel,
-            memBudget = free)
+            memBudget = free, debug = opts.debug)
         out("")
         out("فك الكود المخفي (محاكاة آمنة، ${r.steps} خطوة):", Tone.HEAD)
         r.native?.let { reportNative(it) }
@@ -668,7 +670,8 @@ class Scanner(
         for (u in urls) out("- نص مخفي فكّه: $u", Tone.WARN, 2)
         val joined = n.strings.joinToString("\n").toByteArray()
         if (joined.isNotEmpty()) bytes.scan(joined, joined.size, "native/نصوص مفكوكة")
-        n.stops.take(2).forEach { out("توقّفت المحاكاة native: $it", Tone.MUTED, 2) }
+        n.stops.take(if (opts.debug) 20 else 2).forEach { out("توقّفت المحاكاة native: $it", Tone.MUTED, 2) }
+        n.trace?.let { t -> out("تتبّع الكود native (${t.size}):", Tone.MUTED, 2); t.forEach { out(it, Tone.MUTED, 3) } }
     }
 
     /** خلاصة بكلام بسيط لمن لا يعرف شيئاً عن الأمن: ماذا يعني هذا لك؟ */

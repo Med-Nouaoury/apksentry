@@ -101,6 +101,7 @@ class EmuRuntime(
             return null
         }
         val n = NativeRuntime(pkg, zip, apkBytesRef, memLimit = nativeMemory)
+        if (nativeDebug) n.trace = ArrayList()
         nativeRt = n
         val b = NativeBridge(n, this, e)
         n.bridge = b
@@ -132,6 +133,9 @@ class EmuRuntime(
         sinceCheck += n
         if (sinceCheck > 4L * 1024 * 1024) { sinceCheck = 0; if (MemGuard.free() < MemGuard.RESERVE) throw EmuLimit("ذاكرة الهاتف") }
     }
+
+    private var sleptMs = 0L
+    var nativeDebug = false
 
     /** حد ذاكرة المحاكي native (يحدّده Unpacker حسب الذاكرة الحرة). */
     var nativeMemory = 96L * 1024 * 1024
@@ -273,7 +277,8 @@ class EmuRuntime(
             "Ljava/lang/System;" -> return system(name, a)
             "Ljava/lang/Thread;" -> return when (name) {
                 "currentThread" -> ThreadStub(null)
-                "sleep", "yield" -> null
+                "sleep" -> { sleptMs += minOf(3_600_000L, (a.getOrNull(0) as? Number)?.toLong() ?: 0L); null }
+                "yield" -> null
                 else -> defaultFor(ret)
             }
             "Landroid/os/Process;" -> return when (name) { "myPid" -> 4321; "myUid" -> 10123; "myTid" -> 4321; else -> defaultFor(ret) }
@@ -581,8 +586,9 @@ class EmuRuntime(
             } catch (e: IndexOutOfBoundsException) { throw EmuThrow(e) } catch (e: ArrayStoreException) { throw EmuThrow(e) } catch (e: NullPointerException) { throw EmuThrow(e) }
             null
         }
-        "currentTimeMillis" -> 1_700_000_000_000L
-        "nanoTime" -> 1_000_000_000L
+        // ساعة وهمية تتقدّم مع التنفيذ (10 ملايين تعليمة Dalvik = ثانية) ومع النوم
+        "currentTimeMillis" -> 1_700_000_000_000L + (emu?.steps ?: 0) / 10_000 + sleptMs
+        "nanoTime" -> 1_000_000_000L + (emu?.steps ?: 0) * 100 + sleptMs * 1_000_000
         "identityHashCode" -> System.identityHashCode(a[0])
         "getProperty" -> when (a[0]) { "java.vm.version" -> "2.1.0"; "os.arch" -> "aarch64"; "line.separator" -> "\n"; "file.separator" -> "/"; else -> a.getOrNull(1) }
         "lineSeparator" -> "\n"
@@ -773,7 +779,10 @@ class NativeBridge(val rt: NativeRuntime, private val jrt: EmuRuntime, private v
     /** Java يستدعي وظيفة native. */
     fun callFromJava(m: AppMethod, args: List<Any?>): Any? {
         val sig = "(" + m.params.joinToString("") + ")" + m.ret
-        val fn = rt.findNative(m.cls, m.name, sig) ?: throw EmuUnsupported("native ${m.cls}->${m.name} (لم نجد الدالة)")
+        val fn = rt.findNative(m.cls, m.name, sig) ?: run {
+            rt.tr("لم نجد ${m.cls}->${m.name}$sig؛ المسجّلة: ${rt.registered.keys.take(6)}؛ المكتبات: ${rt.libs.keys}")
+            throw EmuUnsupported("native ${m.cls}->${m.name} (لم نجد الدالة)")
+        }
         val recv = if (m.isStatic) null else args.getOrNull(0)
         val a = if (m.isStatic) args else args.drop(1)
         return rt.callJava(fn, m.isStatic, recv, m.cls, m.params, m.ret, a)
