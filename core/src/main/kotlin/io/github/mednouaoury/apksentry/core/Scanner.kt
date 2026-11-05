@@ -44,7 +44,7 @@ class Scanner(
     private val isCancelled: () -> Boolean = { false },
 ) {
     companion object {
-        const val VERSION = "3.9.1"
+        const val VERSION = "3.9.2"
         private val DEX_RE = Regex("classes\\d*\\.dex")
         private val B64_RE = Regex("[A-Za-z0-9+/=]{80,}")
         private val PATH_RE = Regex("\\.so$|^lib\\w+$|/data/|/sdcard|/storage/|/system/|\\.dex$|\\.apk$|\\.jar$")
@@ -687,6 +687,9 @@ class Scanner(
         }
         if (all.any { EVASION.containsMatchIn(it) })
             s.add(Line("يستعمل حيلاً ليختبئ من أدوات الفحص، والتطبيقات العادية لا تفعل هذا.", Tone.BAD))
+        // ما وجدناه داخل الكود المفكوك (خدمة VPN، إمكانية الوصول...) هو أهم ما في التقرير
+        all.filter { it.startsWith("الكود المخفي فيه") || it.startsWith("الكود المخفي يقرأ") || it.startsWith("الكود المخفي يطلب") }
+            .take(2).forEach { s.add(Line(it.replace("الكود المخفي", "الكود الذي كان مخفياً") + ".", Tone.BAD)) }
         if (nativeHidden.isNotEmpty())
             s.add(Line("يخفي داخل كود native (حيث لا تراه أدوات الفحص العادية): " + nativeHidden.take(3).joinToString("، ") + ".", Tone.BAD))
         // سلوك قوي = دليل؛ قدرة مزدوجة الاستعمال (لها سياق "عادي في ...") = تحتاج انتباهاً فقط، ولا نسمّيها "فيروساً"
