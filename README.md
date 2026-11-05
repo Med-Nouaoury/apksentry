@@ -87,13 +87,13 @@ Reported separately from the risk score: trust-all `TrustManager`, permissive `H
 
 The engine is evaluated with [`bench/benchmark.py`](bench/benchmark.py) on real Android malware from [MalwareBazaar](https://bazaar.abuse.ch/) and clean apps from [F-Droid](https://f-droid.org/). The benchmark runs on disposable GitHub Actions runners, and samples are deleted after scanning.
 
-**Latest run: v3.7.2, November 2026.** 246 malware samples across 25 families (Hydra, Cerberus, Alien, SpyNote, Coper, IRATA, droppers and others), and 382 clean apps.
+**Latest run: v3.9.0, November 2026.** 246 malware samples across 25 families (Hydra, Cerberus, Alien, SpyNote, Coper, IRATA, droppers and others), and 389 clean apps.
 
 | Risk threshold | Malware detected | Clean apps flagged |
 |---|---:|---:|
-| ≥ 10 | 95.5% | 23.6% |
-| **≥ 35** | **91.9%** | **8.1%** |
-| ≥ 60 | 84.6% | 3.7% |
+| ≥ 10 | 95.9% | 23.9% |
+| **≥ 35** | **92.3%** | **6.9%** |
+| ≥ 60 | 85.4% | 3.1% |
 
 How to read these numbers:
 

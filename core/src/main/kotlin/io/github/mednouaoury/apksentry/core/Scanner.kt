@@ -42,7 +42,7 @@ class Scanner(
     private val isCancelled: () -> Boolean = { false },
 ) {
     companion object {
-        const val VERSION = "3.9.0"
+        const val VERSION = "3.9.1"
         private val DEX_RE = Regex("classes\\d*\\.dex")
         private val B64_RE = Regex("[A-Za-z0-9+/=]{80,}")
         private val PATH_RE = Regex("\\.so$|^lib\\w+$|/data/|/sdcard|/storage/|/system/|\\.dex$|\\.apk$|\\.jar$")
@@ -699,16 +699,21 @@ class Scanner(
                 s.add(Line("يستطيع أن $what" + (if (ctx.startsWith("عادي")) ": $ctx، فتأكّد أن هذا متوقّع منه." else "."), Tone.WARN))
             }
         }
-        else if (risk >= 35 && s.none { it.tone == Tone.BAD }) {
-            // حكم متوسط أو مرتفع بلا سلوك معروف: نقول السبب الأقوى بدل "لم نجد شيئاً"
-            dangers.firstOrNull()?.let { s.add(Line("أخطر ما وجدناه: " + it.message.removePrefix("سلوك: ").substringBefore(" (عادي") + ".", Tone.BAD)) }
-        }
         else if (all.none { it.contains("فيروس معروف") } && nativeHidden.isEmpty() && risk < 35) {
             // إذا كان جزء من الكود مخفياً ولم نفكّه، لا نعد بشيء عن الجزء الذي لم نره
             if (!hiddenPayload && (hidingTool || addedNativeLib || packedDex))
                 s.add(Line("في الكود الذي استطعنا قراءته، لم نجد سلوك فيروس. لكن جزءاً منه مخفي، ولا نعرف ما يفعله.", Tone.WARN))
             else
                 s.add(Line("لم نجد سلوك فيروس: لا يسرق رسائلك ولا يتحكم في شاشتك ولا يرسل بياناتك.", Tone.OK))
+        }
+        // حكم متوسط أو مرتفع: يجب أن تقول الخلاصة السبب الأقوى بالأحمر، حتى لو كانت كل القدرات مزدوجة الاستعمال
+        // (اجتماع عدة قدرات حساسة في تطبيق واحد هو ما رفع الحكم)
+        if (risk >= 35 && s.none { it.tone == Tone.BAD }) {
+            dangers.firstOrNull()?.let {
+                val many = dangers.size > 1
+                s.add(0, Line("أخطر ما وجدناه: " + it.message.removePrefix("سلوك: ").substringBefore(" (عادي") +
+                    (if (many) "، مع ${count(dangers.size - 1, "علامة أخرى", "علامتين أخريين", "علامات أخرى", "علامة أخرى")}" else "") + ".", Tone.BAD))
+            }
         }
         when {
             rep != null && rep.source == "Google Play" -> s.add(Line("موقّع من المطوّر الرسمي نفسه (نفس شهادة النسخة المثبتة من Google Play).", Tone.OK))
