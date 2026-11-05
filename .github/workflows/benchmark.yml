@@ -16,6 +16,9 @@ on:
       offset:
         description: "0 = نفس العينات ديما، 25 = عينات جديدة ما شافهاش المحرك"
         default: "0"
+      shas:
+        description: "(اختياري) لائحة sha256 مفصولة بفاصلة: نفحصو غير هادو ونطبعو التقرير كامل"
+        default: ""
 
 permissions:
   contents: read
@@ -48,8 +51,13 @@ jobs:
             exit 1
           fi
           pip install pyzipper
+          EXTRA=""
+          if [ -n "${{ inputs.shas }}" ]; then
+            echo "${{ inputs.shas }}" | tr ',' '\n' > shas.txt
+            EXTRA="--sha-list shas.txt --full"
+          fi
           python3 bench/benchmark.py --cli core/build/libs/apksentry-cli.jar \
-            --malware "${{ inputs.malware }}" --fdroid "${{ inputs.fdroid }}" --offset "${{ inputs.offset }}" --seed "$((2 + ${{ inputs.offset }}))" --out bench_out
+            --malware "${{ inputs.malware }}" --fdroid "${{ inputs.fdroid }}" --offset "${{ inputs.offset }}" --seed "$((2 + ${{ inputs.offset }}))" --out bench_out $EXTRA
           rm -rf bench_out/malware_samples bench_out/clean_fdroid
 
       - name: Report

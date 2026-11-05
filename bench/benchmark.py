@@ -223,17 +223,17 @@ def scan(cli, path, timeout, java):
                            capture_output=True, timeout=timeout)
         text = p.stdout.decode("utf-8", "replace")
     except subprocess.TimeoutExpired:
-        return None, None, [], "timeout", time.time() - t0, [], []
+        return None, None, [], "timeout", time.time() - t0, [], [], ""
     m = RISK.search(text)
     if not m:
         err = [l for l in p.stderr.decode("utf-8", "replace").splitlines() if "خطأ" in l or "Exception" in l or "Error" in l]
-        return None, None, [], (err[0] if err else "no result")[:200], time.time() - t0, [], []
+        return None, None, [], (err[0] if err else "no result")[:200], time.time() - t0, [], [], text
     mod = MOD.search(text)
     dangers = []
     if "⛔ علامات خطر:" in text:
         block = text.split("⛔ علامات خطر:", 1)[1].split("\n\n", 1)[0]
         dangers = [l.strip() for l in block.splitlines() if l.strip().startswith("[")][:4]
-    return int(m.group(1)), int(mod.group(1)) if mod else 0, dangers, "", time.time() - t0, diag(text), CONTRA.findall(text)
+    return int(m.group(1)), int(mod.group(1)) if mod else 0, dangers, "", time.time() - t0, diag(text), CONTRA.findall(text), text
 
 
 def pct(a, b):
@@ -254,6 +254,7 @@ def main():
     ap.add_argument("--offset", type=int, default=0, help="نتخطاو أول N عينة ف كل عائلة (باش نجرّبو على عينات جديدة)")
     ap.add_argument("--seed", type=int, default=2)
     ap.add_argument("--sha-list", help="ملف فيه لائحة sha256 (باش نعاودو نفس العينات ونقارنو قبل/بعد)")
+    ap.add_argument("--full", action="store_true", help="نطبعو التقرير كامل ديال كل ملف (للتشخيص)")
     a = ap.parse_args()
 
     os.makedirs(a.out, exist_ok=True)
@@ -280,7 +281,12 @@ def main():
 
     rows = []
     for i, (kind, path, sha, fam) in enumerate(items):
-        risk, mod, dangers, err, sec, dg, contra = scan(a.cli, path, a.timeout, a.java)
+        risk, mod, dangers, err, sec, dg, contra, text = scan(a.cli, path, a.timeout, a.java)
+        if a.full:
+            # التقرير كاملاً (للتشخيص): الخلاصة وقسم فك الكود
+            print(f"===== FULL {kind} {sha or os.path.basename(path)} =====", flush=True)
+            for l in text.splitlines():
+                print(f"  > {l}", flush=True)
         for c in contra:
             print(f"CONTRA {kind} {fam} {sha or os.path.basename(path)}: {c}", flush=True)
         tag = "خطأ" if risk is None else f"{risk}/100"
